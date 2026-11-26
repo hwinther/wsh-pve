@@ -11,7 +11,9 @@
 # and checks its pixels: Glide 2 into a window it hands over (what qemu-3dfx does with the SDL
 # window), Glide 2 into the library's own window, and Glide 3 through the wrap3x_ entry points, with
 # llvmpipe and with softpipe (llvmpipe doesn't return a front buffer after a swap, softpipe does: the
-# front-buffer read counts only with softpipe). The same scenes again offscreen (glide-render --egl:
+# front-buffer read counts only with softpipe), and the texture scene (glide-render --textures: the
+# texel alpha that picks the colour combine's local colour, NCC textures). The same scenes again
+# offscreen (glide-render --egl:
 # the EGL platform qemu-3dfx asks for when the VM has no SDL window), with no X server and DISPLAY
 # unset, on Mesa's surfaceless EGL platform; there the front buffer counts with both drivers and the
 # frame is also read the way qemu-3dfx reads it (getOffscreenFrame), and, with /dev/udmabuf or a
@@ -67,7 +69,7 @@ cd "$work"
 XVFB_ARGS="-screen 0 1024x768x24 -extension Composite"
 failed=""
 for driver in llvmpipe softpipe; do
-	for mode in "glide2x:" "glide2x-own-window:--own-window" "glide3x:--glide3"; do
+	for mode in "glide2x:" "glide2x-own-window:--own-window" "glide3x:--glide3" "glide2x-textures:--textures"; do
 		name=${mode%%:*}
 		args=${mode#*:}
 		[ "$driver" = softpipe ] || args="$args --no-front"
@@ -82,7 +84,7 @@ for driver in llvmpipe softpipe; do
 done
 # Offscreen: no X server at all (DISPLAY unset, Xvfb not running), Mesa's surfaceless EGL platform
 for driver in llvmpipe softpipe; do
-	for mode in "glide2x-egl:--egl" "glide3x-egl:--egl --glide3"; do
+	for mode in "glide2x-egl:--egl" "glide3x-egl:--egl --glide3" "glide2x-textures-egl:--egl --textures"; do
 		name=${mode%%:*}
 		args=${mode#*:}
 		ppm=""

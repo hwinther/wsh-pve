@@ -3,6 +3,7 @@
  * (libglide2x.so / libglide3x.so from wsh-openglide) and check its pixels. No guest, no QEMU.
  *
  *   glide-render [--glide3] [--own-window | --egl [--dmabuf]] [--no-front] [--ppm FILE]
+ *   glide-render --textures [--egl] [--ppm FILE]
  *   glide-render --check-window WINDOW-ID [--ppm FILE]
  *   glide-render --check-ppm FILE
  *
@@ -32,6 +33,17 @@
  * imported through EGL) and compared with the read, without and with a gamma ramp, and, with a
  * library that has two (getOffscreenDmabufAt, getOffscreenScanoutAt), through the second buffer,
  * checking that a copy into one leaves the other alone (check_dmabuf).
+ *
+ * --textures (Glide 2) draws the texture scene instead (texture_scene()): textured quads that check
+ * colour paths of the texture unit and the colour combine against what a Voodoo gives, read back
+ * with grLfbReadRegion() (and, with --egl, getOffscreenFrame()) and checked against their own probes:
+ *   - grAlphaControlsITRGBLighting(): the top bit of a texel's alpha picks the colour combine's
+ *     local colour, the iterated colour (bit clear) or the constant colour (bit set). The quad's
+ *     left half has alpha 0xf, its right half 0, its vertices are green and the constant white:
+ *     grey on the left, green on the right. The same quad with it off is green all over.
+ *   - NCC (YIQ_422) textures: a table whose I entry takes red below 0 (red clamps to 0, not to
+ *     255), and the same texels again after another table is downloaded (they show the new
+ *     table's colour: the hardware decodes with the table of the moment).
  *
  * --check-window renders nothing: it checks the probes in an existing 640x480 window, such as the
  * SDL window of a VM whose guest draws the same scene through qemu-3dfx (e2e/3dfx). --check-ppm
@@ -189,6 +201,189 @@ static void write_ppm(const char *path)
 			fwrite(rgb, 1, 3, f);
 		}
 	fclose(f);
+}
+
+/* --textures: the Glide 2 texture scene (see the top of the file) */
+#define GR_TMU0 0
+#define GR_LOD_8 0x5
+#define GR_ASPECT_1x1 0x3
+#define GR_TEXFMT_YIQ_422 0x1
+#define GR_TEXFMT_ARGB_4444 0xc
+#define GR_MIPMAPLEVELMASK_BOTH 0x3
+#define GR_TEXTABLE_NCC0 0x0
+#define GR_NCCTABLE_NCC0 0x0
+#define GR_MIPMAP_DISABLE 0x0
+#define GR_TEXTUREFILTER_POINT_SAMPLED 0x0
+#define GR_TEXTURECLAMP_CLAMP 0x1
+#define GR_COMBINE_FUNCTION_LOCAL 0x1
+#define GR_COMBINE_FUNCTION_SCALE_OTHER 0x3
+#define GR_COMBINE_FACTOR_NONE 0x0
+#define GR_COMBINE_FACTOR_LOCAL 0x1
+#define GR_COMBINE_FACTOR_ONE 0x8
+#define GR_COMBINE_LOCAL_ITERATED 0x0
+#define GR_COMBINE_LOCAL_CONSTANT 0x1
+#define GR_COMBINE_OTHER_TEXTURE 0x1
+#define GR_COMBINE_OTHER_CONSTANT 0x2
+
+typedef struct { /* GrTexInfo of the host library (sdk2_glide.h) */
+	int32_t smallLod, largeLod, aspectRatio, format;
+	void *data;
+} TexInfo;
+typedef struct { /* GuNccTable */
+	uint8_t yRGB[16];
+	int16_t iRGB[4][3], qRGB[4][3];
+	uint32_t packed_data[12];
+} NccTable;
+
+static struct {
+	uint32_t (*TexMinAddress)(int);
+	uint32_t (*TexTextureMemRequired)(uint32_t, TexInfo *);
+	void (*TexDownloadMipMap)(int, uint32_t, uint32_t, TexInfo *);
+	void (*TexSource)(int, uint32_t, uint32_t, TexInfo *);
+	void (*TexDownloadTable)(int, uint32_t, void *);
+	void (*TexNCCTable)(int, uint32_t);
+	void (*TexCombine)(int, uint32_t, uint32_t, uint32_t, uint32_t, int, int);
+	void (*TexFilterMode)(int, uint32_t, uint32_t);
+	void (*TexClampMode)(int, uint32_t, uint32_t);
+	void (*TexMipMapMode)(int, uint32_t, int);
+	void (*ColorCombine)(uint32_t, uint32_t, uint32_t, uint32_t, int);
+	void (*AlphaCombine)(uint32_t, uint32_t, uint32_t, uint32_t, int);
+	void (*ConstantColorValue)(uint32_t);
+	void (*AlphaControlsITRGBLighting)(int);
+} tx;
+
+static void texture_syms(void)
+{
+	tx.TexMinAddress = sym("grTexMinAddress", 1);
+	tx.TexTextureMemRequired = sym("grTexTextureMemRequired", 1);
+	tx.TexDownloadMipMap = sym("grTexDownloadMipMap", 1);
+	tx.TexSource = sym("grTexSource", 1);
+	tx.TexDownloadTable = sym("grTexDownloadTable", 1);
+	tx.TexNCCTable = sym("grTexNCCTable", 1);
+	tx.TexCombine = sym("grTexCombine", 1);
+	tx.TexFilterMode = sym("grTexFilterMode", 1);
+	tx.TexClampMode = sym("grTexClampMode", 1);
+	tx.TexMipMapMode = sym("grTexMipMapMode", 1);
+	tx.ColorCombine = sym("grColorCombine", 1);
+	tx.AlphaCombine = sym("grAlphaCombine", 1);
+	tx.ConstantColorValue = sym("grConstantColorValue", 1);
+	tx.AlphaControlsITRGBLighting = sym("grAlphaControlsITRGBLighting", 1);
+}
+
+struct tex_probe {
+	const char *what;
+	int x, y;
+	uint8_t r, g, b;
+};
+static const struct tex_probe tex_probes[] = {
+	{"ITRGB lighting, alpha bit set: constant", 100, 120, 0x88, 0x88, 0x88},
+	{"ITRGB lighting, alpha bit clear: iterated", 220, 120, 0x00, 0x88, 0x00},
+	{"ITRGB lighting off, alpha bit set", 420, 120, 0x00, 0x88, 0x00},
+	{"ITRGB lighting off, alpha bit clear", 540, 120, 0x00, 0x88, 0x00},
+	{"YIQ_422, red below 0 clamps to 0", 160, 340, 0x00, 0x28, 0x28},
+	{"YIQ_422, the same texels after a new table", 480, 340, 0xc8, 0xc8, 0xc8},
+};
+
+static int texture_check(const char *source, uint8_t (*px)(int, int, int))
+{
+	int failed = 0;
+	for (size_t i = 0; i < sizeof(tex_probes) / sizeof(tex_probes[0]); i++) {
+		const struct tex_probe *p = &tex_probes[i];
+		int r = px(p->x, p->y, 0), g = px(p->x, p->y, 1), b = px(p->x, p->y, 2);
+		int ok = abs(r - p->r) <= TOLERANCE && abs(g - p->g) <= TOLERANCE && abs(b - p->b) <= TOLERANCE;
+		printf("%-4s %-15s %-45s (%3d,%3d) got #%02x%02x%02x want #%02x%02x%02x\n", ok ? "ok" : "FAIL", source,
+		       p->what, p->x, p->y, r, g, b, p->r, p->g, p->b);
+		failed += !ok;
+	}
+	return failed;
+}
+
+/* A quad x0..x1, y0..y1 in one colour with the whole texture over it (s and t 0..256: Glide 2) */
+static void tex_quad(float x0, float y0, float x1, float y1, float r, float g, float b)
+{
+	const float pos[4][2] = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+	const float st[4][2] = {{0, 0}, {256, 0}, {256, 256}, {0, 256}};
+	Vertex2 v[4];
+	for (int i = 0; i < 4; i++) {
+		memset(&v[i], 0, sizeof(v[i]));
+		v[i].x = pos[i][0];
+		v[i].y = pos[i][1];
+		v[i].r = r;
+		v[i].g = g;
+		v[i].b = b;
+		v[i].a = 255;
+		v[i].oow = 1;
+		v[i].tmuvtx[0].sow = st[i][0];
+		v[i].tmuvtx[0].tow = st[i][1];
+		v[i].tmuvtx[0].oow = 1;
+	}
+	gr.DrawTriangle(&v[0], &v[1], &v[2]);
+	gr.DrawTriangle(&v[0], &v[2], &v[3]);
+}
+
+/* An NCC table as a 3DF file gives it (9-bit I and Q entries), with its packed form: Y y everywhere,
+ * I (ir, ig, ib) everywhere, Q 0 */
+static void ncc_table(NccTable *t, uint8_t y, int16_t ir, int16_t ig, int16_t ib)
+{
+	memset(t, 0, sizeof(*t));
+	for (int i = 0; i < 16; i++)
+		t->yRGB[i] = y;
+	for (int i = 0; i < 4; i++) {
+		t->iRGB[i][0] = ir & 0x1ff;
+		t->iRGB[i][1] = ig & 0x1ff;
+		t->iRGB[i][2] = ib & 0x1ff;
+		t->packed_data[i] = y * 0x01010101u;
+		t->packed_data[4 + i] =
+			((uint32_t)t->iRGB[i][0] << 18) | ((uint32_t)t->iRGB[i][1] << 9) | (uint32_t)t->iRGB[i][2];
+	}
+}
+
+static void texture_scene(void)
+{
+	static uint16_t argb4444[8 * 8];
+	static uint8_t yiq[8 * 8];
+	TexInfo ti = {GR_LOD_8, GR_LOD_8, GR_ASPECT_1x1, GR_TEXFMT_ARGB_4444, argb4444};
+	TexInfo yi = {GR_LOD_8, GR_LOD_8, GR_ASPECT_1x1, GR_TEXFMT_YIQ_422, yiq};
+	NccTable ncc;
+
+	/* grey 0x8 (0x88) everywhere; alpha 0xf in the left half, 0 in the right half */
+	for (int i = 0; i < 8 * 8; i++)
+		argb4444[i] = (i % 8 < 4) ? 0xf888 : 0x0888;
+	memset(yiq, 0, sizeof(yiq)); /* Y, I and Q index 0 */
+
+	uint32_t a = tx.TexMinAddress(GR_TMU0);
+	uint32_t b = a + ((tx.TexTextureMemRequired(GR_MIPMAPLEVELMASK_BOTH, &ti) + 7) & ~7u);
+	tx.TexDownloadMipMap(GR_TMU0, a, GR_MIPMAPLEVELMASK_BOTH, &ti);
+	tx.TexDownloadMipMap(GR_TMU0, b, GR_MIPMAPLEVELMASK_BOTH, &yi);
+	tx.TexFilterMode(GR_TMU0, GR_TEXTUREFILTER_POINT_SAMPLED, GR_TEXTUREFILTER_POINT_SAMPLED);
+	tx.TexClampMode(GR_TMU0, GR_TEXTURECLAMP_CLAMP, GR_TEXTURECLAMP_CLAMP);
+	tx.TexMipMapMode(GR_TMU0, GR_MIPMAP_DISABLE, 0);
+	tx.TexCombine(GR_TMU0, GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE, GR_COMBINE_FUNCTION_LOCAL,
+		      GR_COMBINE_FACTOR_NONE, 0, 0);
+	tx.AlphaCombine(GR_COMBINE_FUNCTION_LOCAL, GR_COMBINE_FACTOR_NONE, GR_COMBINE_LOCAL_CONSTANT,
+			GR_COMBINE_OTHER_CONSTANT, 0);
+	tx.ConstantColorValue(0xffffffff);
+
+	/* the texture times the local colour, which the texel's alpha picks with ITRGB lighting on */
+	tx.TexSource(GR_TMU0, a, GR_MIPMAPLEVELMASK_BOTH, &ti);
+	tx.ColorCombine(GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_LOCAL, GR_COMBINE_LOCAL_ITERATED,
+			GR_COMBINE_OTHER_TEXTURE, 0);
+	tx.AlphaControlsITRGBLighting(1);
+	tex_quad(40, 40, 280, 200, 0, 255, 0);
+	tx.AlphaControlsITRGBLighting(0);
+	tex_quad(360, 40, 600, 200, 0, 255, 0);
+
+	/* the texture alone: Y 40 with I (-100, 0, 0), then Y 200 with no I */
+	tx.ColorCombine(GR_COMBINE_FUNCTION_SCALE_OTHER, GR_COMBINE_FACTOR_ONE, GR_COMBINE_LOCAL_CONSTANT,
+			GR_COMBINE_OTHER_TEXTURE, 0);
+	ncc_table(&ncc, 40, -100, 0, 0);
+	tx.TexDownloadTable(GR_TMU0, GR_TEXTABLE_NCC0, &ncc);
+	tx.TexNCCTable(GR_TMU0, GR_NCCTABLE_NCC0);
+	tx.TexSource(GR_TMU0, b, GR_MIPMAPLEVELMASK_BOTH, &yi);
+	tex_quad(40, 260, 280, 420, 255, 255, 255);
+	ncc_table(&ncc, 200, 0, 0, 0);
+	tx.TexDownloadTable(GR_TMU0, GR_TEXTABLE_NCC0, &ncc);
+	tex_quad(360, 260, 600, 420, 255, 255, 255);
 }
 
 static void triangle(const float pos[3][2], const float rgb[3][3])
@@ -604,7 +799,7 @@ static int check_dmabuf(void)
 
 int main(int argc, char **argv)
 {
-	int own_window = 0, no_front = 0, egl = 0, dmabuf = 0;
+	int own_window = 0, no_front = 0, egl = 0, dmabuf = 0, textures = 0;
 	const char *ppm = NULL, *window_id = NULL, *check = NULL;
 	for (int i = 1; i < argc; i++) {
 		if (!strcmp(argv[i], "--glide3"))
@@ -617,6 +812,8 @@ int main(int argc, char **argv)
 			check = argv[++i];
 		else if (!strcmp(argv[i], "--dmabuf"))
 			dmabuf = 1;
+		else if (!strcmp(argv[i], "--textures"))
+			textures = 1;
 		else if (!strcmp(argv[i], "--no-front"))
 			no_front = 1;
 		else if (!strcmp(argv[i], "--ppm") && i + 1 < argc)
@@ -626,9 +823,10 @@ int main(int argc, char **argv)
 		else {
 			fprintf(stderr,
 				"usage: %s [--glide3] [--own-window | --egl] [--no-front] [--ppm FILE]\n"
+				"       %s --textures [--egl] [--ppm FILE]\n"
 				"       %s --check-window WINDOW-ID [--ppm FILE]\n"
 				"       %s --check-ppm FILE\n",
-				argv[0], argv[0], argv[0]);
+				argv[0], argv[0], argv[0], argv[0]);
 			return 2;
 		}
 	}
@@ -638,6 +836,10 @@ int main(int argc, char **argv)
 		return check_ppm(check);
 	if ((egl && own_window) || (dmabuf && !egl)) {
 		fprintf(stderr, "--egl and --own-window exclude each other, --dmabuf needs --egl\n");
+		return 2;
+	}
+	if (textures && (glide3 || own_window || dmabuf)) {
+		fprintf(stderr, "--textures is a Glide 2 scene, in our window or offscreen\n");
 		return 2;
 	}
 	const char *soname = glide3 ? "libglide3x.so" : "libglide2x.so";
@@ -662,6 +864,8 @@ int main(int argc, char **argv)
 		gr.getOffscreenSize = sym("getOffscreenSize", 1);
 		gr.getOffscreenFrame = sym("getOffscreenFrame", 1);
 	}
+	if (textures)
+		texture_syms();
 	if (glide3) {
 		gr.VertexLayout = sym("grVertexLayout", 1);
 		gr.SstWinClose3 = sym("grSstWinClose", 1);
@@ -718,9 +922,13 @@ int main(int argc, char **argv)
 	int failed = 0, back_ok = 0, front_ok;
 	for (int frame = 0; frame < 2; frame++) {
 		gr.BufferClear(SCENE_CLEAR, 0xff, 0xffff);
-		triangle(red_tri, red_rgb);
-		triangle(green_tri, green_rgb);
-		triangle(gouraud_tri, gouraud_rgb);
+		if (textures) {
+			texture_scene();
+		} else {
+			triangle(red_tri, red_rgb);
+			triangle(green_tri, green_rgb);
+			triangle(gouraud_tri, gouraud_rgb);
+		}
 		if (frame == 1)
 			back_ok = gr.LfbReadRegion(GR_BUFFER_BACKBUFFER, 0, 0, W, H, W * 2, lfb_back);
 		gr.BufferSwap(1);
@@ -732,13 +940,13 @@ int main(int argc, char **argv)
 		fprintf(stderr, "FAIL: grLfbReadRegion of the back buffer\n");
 		failed++;
 	} else {
-		failed += scene_check("LFB back", lfb_px, 1);
+		failed += textures ? texture_check("LFB back", lfb_px) : scene_check("LFB back", lfb_px, 1);
 	}
 	lfb = lfb_front;
 	if (!front_ok) {
 		fprintf(stderr, "%s: grLfbReadRegion of the front buffer\n", no_front ? "info" : "FAIL");
 		failed += !no_front;
-	} else {
+	} else if (!textures) {
 		failed += scene_check("LFB front", lfb_px, !no_front);
 	}
 
@@ -759,7 +967,7 @@ int main(int argc, char **argv)
 				for (int x = 0; x < W; x++)
 					for (int c = 0; c < 3; c++)
 						rgb_img[(y * W + x) * 3 + c] = bgrx[((H - 1 - y) * W + x) * 4 + 2 - c];
-			failed += scene_check("offscreen frame", rgb_px, 1);
+			failed += textures ? texture_check("offscreen frame", rgb_px) : scene_check("offscreen frame", rgb_px, 1);
 			if (ppm)
 				write_rgb_ppm(ppm);
 			if (dmabuf)
@@ -772,7 +980,7 @@ int main(int argc, char **argv)
 			fprintf(stderr, "FAIL: XGetImage\n");
 			failed++;
 		} else {
-			failed += scene_check("X11 window", x_px, 1);
+			failed += textures ? texture_check("X11 window", x_px) : scene_check("X11 window", x_px, 1);
 			if (ppm)
 				write_ppm(ppm);
 		}

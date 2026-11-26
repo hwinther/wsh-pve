@@ -1,0 +1,116 @@
+NCC (YIQ) textures: clamp below 0, and decode with the table of the moment
+
+Two faults in the YIQ_422 and AYIQ_8422 textures, which an NCC table (grTexDownloadTable with
+GR_TEXTABLE_NCC0/1) decodes:
+
+- ConvertYIQto8888() and ConvertAYIQto8888() summed Y and the signed I and Q entries into FxU32,
+  so a channel that went below 0 wrapped and clamped to 255 instead of 0: dark texels of a table
+  with negative I or Q entries came out in bright red, green or blue. The sums are signed now.
+- The texture cache (TexDB) didn't know which table a YIQ texture was decoded with: a texture
+  made once kept that table's colours after the game downloaded another table for the same texels
+  (or selected the other table), where the hardware decodes with the table of the moment. The
+  table's hash (its Y, I and Q entries, taken when it is downloaded) is now part of the cache key
+  for the two formats, as the palette's hash is for paletted textures without
+  GL_EXT_paletted_texture: another table makes another texture, and switching back finds the
+  first one again. The two tables start zeroed (they were uninitialised memory).
+
+For wsh-pve (packages/wsh-openglide), against kjliew/qemu-xtra at the commit upstream.env pins,
+after 0004-itrgb-lighting.patch.
+---
+diff --git a/openglide/FormatConversion.cpp b/openglide/FormatConversion.cpp
+index a020a75..a46a26f 100644
+--- a/openglide/FormatConversion.cpp
++++ b/openglide/FormatConversion.cpp
+@@ -170,9 +170,10 @@ void ConvertAP88to8888( FxU16 *Buffer1, FxU32 *Buffer2, FxU32 Pixels, FxU32 *pal
+ 
+ void ConvertYIQto8888( FxU8 *in, FxU32 *out, FxU32 Pixels, GuNccTable *ncc )
+ {
+-    FxU32  R;
+-    FxU32  G;
+-    FxU32  B;
++    // signed: Y plus negative I and Q terms goes below 0, which clamps to 0
++    FxI32  R;
++    FxI32  G;
++    FxI32  B;
+ 
+     for ( FxU32 i = Pixels; i > 0; i-- )
+     {
+@@ -198,9 +199,9 @@ void ConvertYIQto8888( FxU8 *in, FxU32 *out, FxU32 Pixels, GuNccTable *ncc )
+ 
+ void ConvertAYIQto8888( FxU16 *in, FxU32 *out, FxU32 Pixels, GuNccTable *ncc)
+ {
+-    FxU32  R;
+-    FxU32  G;
+-    FxU32  B;
++    FxI32  R;
++    FxI32  G;
++    FxI32  B;
+ 
+     for ( FxU32 i = Pixels; i > 0; i-- )
+     {
+diff --git a/openglide/PGTexture.cpp b/openglide/PGTexture.cpp
+index 1764d1a..20ce0ae 100644
+--- a/openglide/PGTexture.cpp
++++ b/openglide/PGTexture.cpp
+@@ -10,6 +10,9 @@
+ //*               Linux version by Simon White
+ //**************************************************************
+ 
++#include <stddef.h>
++#include <string.h>
++
+ #include "GlOgl.h"
+ #include "PGTexture.h"
+ #include "GLExtensions.h"
+@@ -79,6 +82,8 @@ PGTexture::PGTexture( int mem_size )
+     m_tex_memory_size = mem_size;
+     m_memory = new FxU8[ mem_size ];
+     m_ncc_select = GR_NCCTABLE_NCC0;
++    memset( m_ncc, 0, sizeof( m_ncc ) );
++    m_ncc_hash[ 0 ] = m_ncc_hash[ 1 ] = 1;
+ 
+ #ifdef OGL_DEBUG
+     Num_565_Tex = 0;
+@@ -250,6 +255,17 @@ void PGTexture::DownloadTable( GrTexTable_t type, FxU32 *data, int first, int co
+             if ( ncc->qRGB[ i ][ 2 ] & 0x100 )
+                 ncc->qRGB[ i ][ 2 ] |= 0xff00;
+         }
++
++        // A YIQ texture is decoded with the table selected when it is first used; a later table
++        // makes another texture of the same texels (MakeReady), as the hardware decodes them
++        // with the table of the moment
++        FxU32 hash = 0;
++        const FxU8 *b = (const FxU8 *)ncc;
++        for ( i = 0; i < (int)offsetof( GuNccTable, packed_data ); i++ )
++        {
++            hash = ( ( hash << 5 ) | ( hash >> 27 ) ) + b[ i ];
++        }
++        m_ncc_hash[ type ] = hash ? hash : 1;
+     }
+ }
+ 
+@@ -323,6 +339,12 @@ bool PGTexture::MakeReady( void )
+ 
+         test_hash = m_palette_hash;
+         break;
++
++    case GR_TEXFMT_YIQ_422:
++    case GR_TEXFMT_AYIQ_8422:
++        test_hash = m_ncc_hash[ m_ncc_select ];
++        wipe_hash = test_hash;
++        break;
+     }
+ 
+     // See if we already have an OpenGL texture to match this
+diff --git a/openglide/PGTexture.h b/openglide/PGTexture.h
+index d6e1881..520bc67 100644
+--- a/openglide/PGTexture.h
++++ b/openglide/PGTexture.h
+@@ -87,6 +87,7 @@ private:
+     FxU32           m_palette[ 256 ];
+     GrNCCTable_t    m_ncc_select;
+     GuNccTable      m_ncc[2];
++    FxU32           m_ncc_hash[2];  // of each table's Y, I and Q entries, never 0 (a TexDB key)
+ };
+ 
+ extern PGTexture *Textures;
