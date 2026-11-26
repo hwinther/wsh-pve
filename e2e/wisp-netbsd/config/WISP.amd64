@@ -1,0 +1,37 @@
+# wisp-netbsd kernel for amd64 (QEMU's pc and q35): the first 16550 as the console, ACPI for the
+# power-off, a memory-disk root with PID 1 and nothing else. From GENERIC and MICROVM; build.sh
+# sets MEMORY_DISK_ROOT_SIZE to fit the image.
+#
+# QEMU's -kernel loads it through its PVH entry (the Xen PHYS32_ENTRY ELF note, which XEN without
+# XENPV adds; QEMU's -kernel takes no 64-bit multiboot image). The hypervisor attachments are
+# what that option needs; they find no Xen under QEMU and stay out of the way.
+
+include 	"arch/amd64/conf/std.amd64"
+
+maxusers	2
+makeoptions	COPTS="-Os"
+
+options 	XEN
+options 	XENPVHVM
+hypervisor*	at mainbus?
+xenbus*		at hypervisor?
+xencons*	at hypervisor?
+
+options 	CONSDEVNAME="\"com\"",CONADDR=0x3f8,CONSPEED=115200
+
+options 	MEMORY_DISK_HOOKS
+options 	MEMORY_DISK_IS_ROOT
+options 	MEMORY_DISK_SERVER=0
+options 	MEMORY_DISK_ROOT_SIZE=WISP_MD_BLOCKS
+pseudo-device	md
+
+file-system	FFS
+options 	FFS_NO_SNAPSHOT
+
+config		netbsd	root on ? type ?
+
+acpi0		at mainbus0
+pci*		at mainbus? bus ?
+pchb*		at pci? dev ? function ?
+isa0		at mainbus?
+com0		at isa? port 0x3f8 irq 4	# the console

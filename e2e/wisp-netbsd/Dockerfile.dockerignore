@@ -1,0 +1,10 @@
+# Build context is the repository root (submodules included), so send only what the image uses.
+*
+!proxmox-archive-keyring-trixie.gpg
+!repo/conf/wsh-pve.gpg.key
+!e2e/wisp/run.py
+!e2e/wisp/shell.py
+!e2e/wisp/tier2.py
+!e2e/wisp-netbsd/
+e2e/wisp-netbsd/out/
+e2e/wisp-netbsd/build/

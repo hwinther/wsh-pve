@@ -1,0 +1,38 @@
+# wisp-netbsd kernel for sparc64 (QEMU's sun4u: an UltraSPARC-IIi with the sabre PCI host bridge,
+# its simba bridges and the EBus with the 16550 "su" console): a memory-disk root with PID 1 and
+# nothing else. From GENERIC and INSTALL; build.sh sets MEMORY_DISK_ROOT_SIZE to fit the image.
+# Power-off goes through the firmware (OpenBIOS's SUNW,power-off).
+
+include 	"arch/sparc64/conf/std.sparc64"
+
+maxusers	2
+makeoptions	COPTS="-Os"
+
+options 	SUN4U
+
+options 	MEMORY_DISK_HOOKS
+options 	MEMORY_DISK_IS_ROOT
+options 	MEMORY_DISK_SERVER=0
+options 	MEMORY_DISK_ROOT_SIZE=WISP_MD_BLOCKS
+pseudo-device	md
+
+# machdep.c's get_symbol_and_offset() only builds (-Werror, unused variables) with ksyms, DDB or
+# MODULAR; ksyms is the smallest of the three.
+pseudo-device	ksyms
+
+file-system	FFS
+options 	FFS_NO_SNAPSHOT
+
+config		netbsd	root on ? type ?
+
+mainbus0	at root
+cpu*		at mainbus0
+psycho*		at mainbus0
+pci*		at psycho?
+ppb*		at pci?
+pci*		at ppb?
+ebus*		at pci?
+pcons0		at mainbus0		# PROM console, until com0 attaches
+
+com*		at ebus?		# su, the console
+clock*		at ebus?		# Mostek time-of-day clock
