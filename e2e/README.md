@@ -61,6 +61,12 @@ Playwright tests against a single-node Proxmox VE running in a container with th
   the host checks the VM's window. `3dfx/win98-test.sh` does the same in a real Windows 98 SE
   guest, from the operator's own disk, through qemu-3dfx's Windows wrappers (Glide 2, Glide 3,
   OpenGL), on the self-hosted lab runner only (the `3dfx in Windows 98` workflow; see the 3dfx guide).
+  `3dfx/dos-test.sh` does it from DOS with free software only: FreeDOS 1.4's boot floppy, once per
+  memory profile (none, HIMEMX, HIMEMX and JEMM386), runs our DJGPP programs `GLIDEDOS.EXE` (Glide 2
+  through the release's `GLIDE2X.DXE`) and `GLID3DOS.EXE` (Glide 3 through its `GLIDE3X.DXE`; both
+  built from `3dfx/dos/glidedos.c` by `3dfx/dos/build.sh`), each checking its own read-back, and
+  the harness checks each frame in QEMU's screendump and DOS's text screen after it (the
+  `3dfx in DOS` workflow, on GitHub-hosted runners, with KVM when the runner has it).
   `vm-config.spec.ts` also checks `mesa-display=egl-headless` (`-display egl-headless` next to the VNC
   server, and its refusals), and `ui-hardware.spec.ts` the Display dialog's **3DFX/Mesa display**; both
   are skipped with packages that predate it.
