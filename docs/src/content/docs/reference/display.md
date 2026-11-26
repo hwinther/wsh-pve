@@ -330,8 +330,8 @@ GL read through EGL (`x86_64-egl`, Mesa's software device), every check passed.
 ### On a node
 
 Tested on a PVE node (pve-qemu-kvm 11.1.3-4, qemu-server with the D-Bus display, an NVIDIA GPU on
-NVIDIA's own driver): Wolf in a **privileged** container, the VM started with `qm start`. An
-unprivileged container needs `dbus-display-uids` (below).
+NVIDIA's own driver): Wolf in a **privileged** container, and in an **unprivileged** one (with
+`dbus-display-uids` and a udev rule on the node, below), the VM started with `qm start`.
 
 **The privileged container.** The template is `e2e/streaming/Dockerfile`'s `ct` stage (Debian 13
 with systemd, Wolf, `wsh-gst-qemu-dbus`, x264, GStreamer's nvcodec, PulseAudio, `wolf-start`,
@@ -375,70 +375,125 @@ pct exec <ctid> -- wolf-start <vmid>              # PulseAudio, Wolf, the app "w
 - Moonlight reaches Wolf on TCP 47984, 47989 and 48010 and UDP 47999, 48100 and 48200 of the
   container's address.
 
-**An unprivileged container** (the same template) works with `dbus-display-uids` (qemu-server and
-`wsh-gst-qemu-dbus` newer than the test above; not run on a node yet). Two things kept it out
-before: GLib's D-Bus client authenticated with `AUTH EXTERNAL 0`, the uid it sees in the container,
-while the bus sees the host's (100000), and dbus-daemon refuses a uid without a user in the node's
-user database, whatever its policy says, and checks `<allow group=...>` against that database, not
-against the process's groups. Now the clients send no uid, and qemu-server gives the uids in
-`dbus-display-uids` a user, a policy of their own on that VM's bus and the right to pass through
-the socket directory. On the node, as root:
+**An unprivileged container** (the same template) streams with `dbus-display-uids` and a udev rule
+on the node for Wolf's input devices. Tested end to end on the node above (qemu-server 9.2.24+wsh3,
+pve-qemu-kvm 11.1.3-4+wsh29, wsh-gst-qemu-dbus 0.3): picture, sound, keyboard and mouse, from the
+container's loopback and from a client on another machine (measured below). Give the container a
+uid range of its own, so that no other container's root is the uid the VM's bus and the input
+devices are given to. On the node, as root (`<uid>` the container's root on the node, here 300000):
 
 ```sh
-qm set <vmid> --vga std,display=dbus --audio0 device=AC97,driver=dbus \
-  --dbus-display-uids 100000      # the container's root on the node (lxc.idmap: 0 -> 100000)
+echo 'root:<uid>:65536' >> /etc/subuid      # once per node, for the container's lxc.idmap
+echo 'root:<uid>:65536' >> /etc/subgid
+cat > /etc/udev/rules.d/90-wsh-wolf-uinput.rules <<EOF
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Wolf *", OWNER="<uid>", GROUP="<uid>", MODE="0660", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+EOF
+udevadm verify /etc/udev/rules.d/90-wsh-wolf-uinput.rules && udevadm control --reload
+qm set <vmid> --vga std,display=dbus --audio0 device=AC97,driver=dbus --dbus-display-uids <uid>
 qm start <vmid>
 pct create <ctid> wsh-stream3d-ct.tar.gz --hostname wolf --unprivileged 1 --ostype debian \
-  --rootfs local:4 --memory 1536 --cores 4 --features nesting=1 --net0 name=eth0,bridge=vmbr0,ip=dhcp \
-  --dev0 /dev/uinput
+  --rootfs local:4 --memory 2048 --cores 4 --features nesting=1 \
+  --net0 name=eth0,bridge=vmbr0,ip=dhcp --dev0 /dev/uinput
 cat >> /etc/pve/lxc/<ctid>.conf <<EOF
+lxc.idmap: u 0 <uid> 65536
+lxc.idmap: g 0 <uid> 65536
 lxc.mount.entry: /run/wsh-dbus-display srv/wsh-dbus-display none bind,create=dir 0 0
 lxc.mount.entry: /dev/input dev/input none bind,create=dir 0 0
 lxc.cgroup2.devices.allow: c 13:* rwm
 EOF
+pct mount <ctid>    # shift the template's owners from 100000+ to <uid>+ (see below)
+python3 - /var/lib/lxc/<ctid>/rootfs <uid> <<'EOF'
+import os, stat, sys
+root, uid = sys.argv[1], int(sys.argv[2])
+def shift(i): return i - 100000 + uid if 100000 <= i < 165536 else i
+for d, dirs, files in os.walk(root):
+    dirs[:] = [x for x in dirs if not os.path.ismount(os.path.join(d, x))]
+    for p in [d] + [os.path.join(d, f) for f in files]:
+        st = os.lstat(p)
+        if (shift(st.st_uid), shift(st.st_gid)) != (st.st_uid, st.st_gid):
+            os.lchown(p, shift(st.st_uid), shift(st.st_gid))
+            if not stat.S_ISLNK(st.st_mode):
+                os.chmod(p, stat.S_IMODE(st.st_mode))   # chown clears set-uid bits
+EOF
+pct unmount <ctid>
 pct start <ctid>
-pct exec <ctid> -- wolf-start <vmid>
+pct exec <ctid> -- env -i HOME=/root PATH=/usr/local/bin:/usr/bin:/bin wolf-start <vmid>
 ```
 
-- **Which uid**: the host uid of the container's root (or of the user the clients run as there):
-  `100000` for PVE's default mapping, else what the container's `lxc.idmap` maps 0 to. No group
-  mapping and no `/etc/subgid` entry are needed.
-- **What the uid gets**: this VM's screen, sound, keyboard and mouse, as a VNC console would give
-  them. Every container whose root is that host uid and which has the directory bind-mounted gets
-  them; with the default mapping all unprivileged containers share 100000, so only the bind mount
-  keeps the others out. A streaming container with an `lxc.idmap` range of its own gets a uid no
-  other container has.
-- **What stays on the node**: the user `wsh-display-<uid>` (locked, no home, `nologin`) is kept
-  after the VM stops (`userdel wsh-display-<uid>` removes it); it lets that uid be named, nothing
-  more (dbus-daemons accept a uid only with a user). The ACL entry goes when no running VM names
-  the uid.
-- **A uid range of its own** (`lxc.idmap: u 0 300000 65536` and `g 0 300000 65536`, with
-  `root:300000:65536` in `/etc/subuid` and `/etc/subgid`): `pct create` unpacks the template with
-  PVE's default mapping (owners 100000 and up) before the `lxc.idmap` lines are in the
-  configuration, so the container then fails to start (`Permission denied` creating its mount
-  points). Shift the owners once before the first start: `pct mount <ctid>`, add 200000 to every
-  uid and gid from 100000 to 165535 under `/var/lib/lxc/<ctid>/rootfs` (keeping the modes:
-  `chown` clears set-uid bits), `pct unmount <ctid>`. Then `dbus-display-uids 300000`.
-- **Input needs the node's help.** Tried on the node (a range of its own, as above): the
-  container's root opens `/dev/uinput` (PVE makes the node `root:root 0660` inside) and creates
-  devices, but the event devices they become appear in the node's `/dev/input` as
-  `root:input 0660`, which the bind mount shows the container as `nobody:nogroup`: opening
-  them is refused (`EACCES`), so `wolf-input-bridge` gets nothing. In a privileged container the
-  same device opens. A udev rule on the node that gives Wolf's devices (all named `Wolf ...`) to
-  the container's root, and keeps the node's desktop off them, makes them usable (checked with
-  `udevadm verify`, not installed in the test):
+- **Which uid**: the host uid of the container's root: what its `lxc.idmap` maps 0 to (`100000`
+  with PVE's default mapping, which every unprivileged container shares). No group mapping is
+  needed for the bus.
+- **The owners before the first start**: `pct create` unpacks the template with PVE's default
+  mapping (owners 100000 and up) before the `lxc.idmap` lines are in the configuration, so the
+  container would then fail to start (`Permission denied` creating its mount points). The Python
+  between `pct mount` and `pct unmount` adds `<uid> - 100000` to every uid and gid from 100000 to
+  165535 under the container's root file system, without following symbolic links, and sets each
+  mode again (`chown` clears set-uid bits).
+- **What the uid gets on the bus**: this VM's screen, sound, keyboard and mouse, as a VNC console
+  would give them. Every container whose root is that host uid and which has the directory
+  bind-mounted gets them. Tested: the container's root reaches the VM's bus (picture, the sound
+  listener, input); a user of the container (uid 1000, 301000 on the node) is refused at the
+  socket directory (`Could not connect: Permission denied`), and so is uid 200000 on the node; the
+  container's root on another VM's bus that doesn't list it gets through the directory but is
+  refused by that bus (`The connection is closed`).
+- **What stays on the node**: the user `wsh-display-<uid>` (locked, no home, `nologin`; `useradd`
+  warns that the uid is above `SYS_UID_MAX`, which is harmless) is kept after the VM stops
+  (`userdel wsh-display-<uid>` removes it); it lets that uid be named, nothing more (dbus-daemons
+  accept a uid only with a user). The ACL entry goes when no running VM names the uid.
+- **Input: the udev rule.** The container's root opens `/dev/uinput` (PVE makes the node `root:root
+  0660` inside) and Wolf creates its keyboard and mice, but the event devices they become appear in
+  the node's `/dev/input` as `root:input 0660`, which the bind mount shows the container as
+  `nobody:nogroup`: opening them is refused (`EACCES`), so `wolf-input-bridge` gets nothing. The
+  rule gives the devices named `Wolf ...` to the container's root and tells libinput (a desktop on
+  the node) to leave them alone. What it changes on the node: those devices only, while they exist
+  (Wolf makes them per session); the node's real keyboard and mouse stay `root:input`. Any process
+  on the node that may write `/dev/uinput` (root) can make a device with such a name, which then
+  goes to that uid. No way without a node change was found: the container's root can't `chown` a
+  device node that belongs to the node's root, a bind mount of single device nodes keeps their
+  owner, and mapping the node's `input` group into the container would hand it every input device
+  of the node, its real keyboard included. A bridge on the node (reading Wolf's devices there)
+  would be a node service and is not part of this design.
+- **A DHCP client**: the `ct` template has `dhcpcd-base`, so `ip=dhcp` works (the first templates
+  had no DHCP client and `ifup` failed with `No DHCP client software found!`).
+- **`stream3d.py` with an unprivileged container**: a directory under `/root` on the node can't be
+  bind-mounted into it (the mount is made inside the container's user namespace, which may not
+  pass `/root`'s `0700`). Use the container's own directory through the node's `/proc`: `pct exec
+  <ctid> -- sh -c 'mkdir -p /shared && chmod 1777 /shared'`, then `--shared
+  /proc/$(lxc-info -n <ctid> -p -H)/root/shared` and an `--outdir` below it (made `0777` first, so
+  the probe in the container may write there) with `--probe-outdir /shared/<name>`.
+- **Without `dbus-display-uids`** (a qemu-server older than the option): Wolf starts in the
+  unprivileged container, but `qemudbussrc` can't reach the socket (`Could not connect: Permission
+  denied` on `/run/wsh-dbus-display`, `root:wsh-display 0750`).
 
-  ```text
-  # /etc/udev/rules.d/90-wsh-wolf-uinput.rules (300000: the container's root on the node)
-  SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Wolf *", OWNER="300000", GROUP="300000", MODE="0660", ENV{LIBINPUT_IGNORE_DEVICE}="1"
-  ```
+**A Moonlight client on the network.** Wolf listens on the container's address: TCP 47984 (HTTPS,
+pairing), 47989 (HTTP) and 48010 (RTSP), UDP 47999 (control), 48100 (video) and 48200 (audio), and
+mDNS on UDP 5353 (Wolf's ports, not Sunshine's 47998-48010). Put the container's `net0` on the
+bridge and VLAN the clients reach (`bridge=vmbr0,tag=<vlan>` on a VLAN-aware bridge) with DHCP or
+a fixed address. PVE's firewall filters a container only when its `net0` has `firewall=1` (and the
+datacenter's firewall is enabled); then the container's `/etc/pve/firewall/<ctid>.fw` needs:
 
-  Any process on the node that may write `/dev/uinput` can make a device with such a name, which
-  then goes to that uid; mapping the node's `input` group into the container instead would hand
-  it every input device of the node, its real keyboard included.
-- **Without `dbus-display-uids`** (a qemu-server older than the option, as on the test node):
-  Wolf starts in the unprivileged container, but `qemudbussrc` can't reach the socket
-  (`Could not connect: Permission denied` on `/run/wsh-dbus-display`, `root:wsh-display 0750`).
+```text
+[OPTIONS]
+enable: 1
+
+[RULES]
+IN ACCEPT -p tcp -dport 47984,47989,48010
+IN ACCEPT -p udp -dport 47999,48100,48200
+IN ACCEPT -p udp -dport 5353
+```
+
+(the last for mDNS discovery only: a client can add the host by its address). To pair a client
+(Moonlight on a PC, TV or phone): add the host by the container's address (or pick it when mDNS
+finds it, named `wsh-pve`), select it, and Moonlight shows a four-digit PIN. Enter it on the node:
+
+```sh
+pct exec <ctid> -- env -i HOME=/root PATH=/usr/local/bin:/usr/bin:/bin wolf-pair <pin>
+```
+
+`wolf-pair` waits up to 60 seconds for the request and answers it; the client then lists one app
+per VM, `wsh-vm-<vmid>`. Pairings are kept in the container's `/etc/wolf/cfg/config.toml`, also
+when `wolf-start` runs again. Wolf doesn't start by itself with the container: run `wolf-start`
+after the container starts (the VMs must be running for their apps to stream).
 
 **NVIDIA GPU: NVENC.** Add the GPU's devices and NVIDIA's libraries of the node's driver version
 (here installed with NVIDIA's installer, not packages; copy them from the node), then start Wolf
@@ -515,8 +570,29 @@ later changed the picture once in about 66 updates, and reading the frames as `B
 `RGBx` changed nothing. QEMU's updates came 9-27 ms after the guest's report that it drew, as
 without GL; where the rest goes is open.
 
-Not verified yet: the unprivileged container end to end (see above), a client on another machine
-over the network, a real Moonlight client on a TV or phone. A Glide guest: below.
+**The unprivileged container, measured** (qemu-server 9.2.24+wsh3, pve-qemu-kvm 11.1.3-4+wsh29,
+wsh-gst-qemu-dbus 0.3; KVM guest, wisp's framebuffer kernel at 1280x800, PS/2 mouse, refresh 30 ms,
+x264; 10 latency samples each). Over the network the probe ran on another machine in the same
+VLAN (0.2-0.4 ms ping) and `stream3d.py` on the node read its output; the two clocks agreed within
+about 1 ms (ICMP timestamps), which is the error of those numbers:
+
+| | loopback (probe in the container) | network (probe on another machine) |
+| --- | --- | --- |
+| Guest draws -> decoded at the client, median (min-max) | 61.3 ms (50.6-79.3) | 60.6 ms (41.4-72.4) |
+| Frames per second at the client while the guest draws; new pictures | 60.5; 23.0 | 59.8; 28.8 |
+| Key: client -> the guest's serial line, median | 2.6 ms | 3.0 ms |
+| Key: client -> Wolf's virtual keyboard (the bridge reads it), median | 0.2 ms | 0.7 ms |
+| Left button: client -> the guest's serial line | 3.7 ms | 4.2 ms |
+| Sound: `soundtest 440 2000` | 440.0 Hz, 2.03 s, no dropout, first sound 28 ms after the command | not checked (the client's WAV stays on that machine) |
+
+Every check passed (the picture 1.59/255 from QEMU's screendump on the loopback). The network adds
+about half a millisecond to input; the picture's latency is the same within the spread, which is
+QEMU's 30 ms refresh. The Windows 98 Glide guest of the next section through the same unprivileged
+container (Glide read back, x264, the probe on the loopback, `SRC_PROPS=shared-map=false`, see
+there): guest swap to decoded frame 26.1 ms median (20.8-34.7, 597 frames), 59.8 new guest
+frames a second, keys A, B, Z and the tablet exact, input to picture 42.0 ms, as in the privileged
+container. Not verified yet: a real Moonlight client on a PC, TV or phone (paired and
+streamed by moonlight-embedded's libraries only). A Glide guest: below.
 
 ### A Windows 98 guest with Glide
 
@@ -563,6 +639,15 @@ every boot, and at the first boot with these devices at two new-hardware wizards
 and AC97 at its new address), which Enter took through. `--api glide3` uses Glide 3.
 `--tap-address unix:path=/srv/wsh-dbus-display/<vmid>.sock` adds a second listener in the
 container during the latency seconds, which splits the latency at `qemudbussrc`.
+
+**Glide read back needs `SRC_PROPS=shared-map=false`.** With `display=dbus` (no GL) and the shared
+map that `qemudbussrc` offers by default, the client kept the first picture of the Glide window:
+QEMU sent one `ScanoutMap` for the 640x480 surface and then no `UpdateMap` while the program swapped
+60 times a second (on pve-qemu-kvm 11.1.3-4+wsh29; the Windows desktop before it came as plain
+`Scanout`s). Without the map every swap came as a `Scanout` (240 in 4 s) and every check passed.
+Start Wolf for such a VM with `pct exec <ctid> -- env -i HOME=/root
+PATH=/usr/local/bin:/usr/bin:/bin SRC_PROPS=shared-map=false wolf-start <vmid>` (it applies to all
+the apps of that Wolf; wisp's VGA picture streams either way).
 
 **A mode change and Wolf's compositor.** The first runs showed the 640x480 Glide picture unscaled in
 the top left corner of the client's 1280x800, on a checkerboard: the `compositor` that repeats the
