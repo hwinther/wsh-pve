@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""The Glide pass-through of qemu-3dfx from DOS: FreeDOS, our DJGPP test program and qemu-3dfx's
-DOS wrapper GLIDE2X.DXE, end to end, with free software only.
+"""The Glide pass-through of qemu-3dfx from DOS: FreeDOS, our DJGPP test programs and qemu-3dfx's
+DOS wrappers GLIDE2X.DXE and GLIDE3X.DXE, end to end, with free software only.
 
     dos_test.py --drivers qemu-3dfx-drivers-<rev>.zip --bin DIR --out OUT \\
         [--profiles none,xms,emm386] [--accel auto|tcg|kvm] [--cpu pentium3] [--bench N] [--hold S] [--demo-bench N]
-        [--no-space-audio] [--pve VMID]
+        [--no-glide3] [--no-space-audio] [--pve VMID]
 
 The guest is the boot floppy of the FreeDOS 1.4 Floppy Edition (the zip given by FREEDOS_ZIP, or
 downloaded once into FREEDOS_CACHE; the pins are e2e/sparc/targets_dos.py's, downloaded and checked by
@@ -13,9 +13,10 @@ e2e/sparc/fetch_media.py), with mtools putting onto a copy of it:
   - FDCONFIG.SYS, which loads the memory managers of the profile and runs GLIDE.BAT instead of the
     installer; GLIDE.BAT sends the console to COM1 (CTTY COM1), runs the test program and powers the
     VM off (FDAPM POWEROFF, which is on the floppy);
-  - in A:\\GLIDE: GLIDEDOS.EXE (--bin: glidedos.c, built by build.sh in the DJGPP image), GLIDE2X.DXE
-    from the guest drivers (--drivers: the qemu-3dfx-drivers-<rev> release of wsh-pve, the revision
-    the binary names; --dxe takes another one), and FreeDOS's own CWSDPMI.EXE (the DPMI host a DJGPP
+  - in A:\\GLIDE: GLIDEDOS.EXE and GLID3DOS.EXE (--bin: glidedos.c for Glide 2 and Glide 3, built
+    by build.sh in the DJGPP image), GLIDE2X.DXE and GLIDE3X.DXE from the guest drivers (--drivers:
+    the qemu-3dfx-drivers-<rev> release of wsh-pve, the revision the binary names; --dxe and --dxe3
+    take other ones), and FreeDOS's own CWSDPMI.EXE (the DPMI host a DJGPP
     program needs), HIMEMX.EXE and JEMM386.EXE. Those three are not on the boot floppy: they are
     taken out of the Floppy Edition's package archive on its other six floppies (FreeDOS's SLICER
     format: each file a gzip stream after its name) and checked against the sha256 of the files a
@@ -28,10 +29,17 @@ expanded memory, as FreeDOS's boot menu entry 3 loads it: CWSDPMI runs as a VCPI
 QEMU (qemu-system-x86_64-3dfx, the published pve-qemu-kvm's) boots it headless as PVE runs a VM with
 `vga: std,mesa=1` (no display, a VNC server, the HMP monitor on a socket), COM1 to a file. On
 "GLIDEDOS: FRAME" the harness checks the probes of packages/wsh-openglide/tests/scene.h in QEMU's
-screendump of the console, where qemu-3dfx shows the frame (stage 1, read back), and once QEMU says
-the offscreen window closed, that the console shows the VGA again (DOS's text screen, not the
-scene). A profile passes when the program reports PASS (its own read-back matched), the console had
+screendump of the console, where qemu-3dfx shows the frame (stage 1, read back), and on
+"GLIDEDOS: CLOSED" (the wrapper's grSstWinClose returns once QEMU closed the window) that the
+console shows the VGA again (DOS's text screen, not the scene). Not on QEMU's "offscreen closed":
+its stderr reaches the log late, after the next program's window was up. A profile passes when the program reports PASS (its own read-back matched), the console had
 the frame and the VGA came back.
+
+Next in the same boot, GLIDE.BAT runs GLID3DOS.EXE, the same test through Glide 3 and GLIDE3X.DXE
+(its lines start with "GLIDE3DOS:"), with wait=3: DOS's text screen for 3 s before its window opens,
+for the check after GLIDEDOS.EXE. It is checked the same way: its verdict, the probes in the console on
+"GLIDE3DOS: FRAME" and the VGA back after "GLIDE3DOS: CLOSED". With it a profile passes only when
+the Glide 3 test passed too. --no-glide3 leaves it out.
 
 Then, in the same boot, GLIDE.BAT runs the demo (e2e/3dfx/demo, WSHDEMO.EXE from --bin, built by
 its build-dos.sh) with `-check -bench N -hold S -wait 3 -nocom` (--demo-bench N, 0 leaves it out;
@@ -103,10 +111,11 @@ PROFILES = {
     "emm386": ["DEVICE=A:\\GLIDE\\HIMEMX.EXE", "DEVICE=A:\\GLIDE\\JEMM386.EXE X=TEST NOVME NOINVLPG"],
 }
 TAG = "GLIDEDOS"
+TAG3 = "GLIDE3DOS"  # GLID3DOS.EXE (glidedos.c built for Glide 3), after GLIDEDOS.EXE (--no-glide3: not)
 DEMO = "WSHDEMO"  # e2e/3dfx/demo, run after GLIDEDOS.EXE in the same boot (--demo-bench 0: not)
 SPACE = "WSHSPACE"  # e2e/3dfx/space -audiotest, last in the same boot (--no-space-audio: not)
 SPACE_BLASTER = "A220 I5 D1 H5 T6"  # QEMU's sb16 defaults
-LINE_RE = re.compile(r"^(%s|%s|%s): (.*)$" % (TAG, DEMO, SPACE))
+LINE_RE = re.compile(r"^(%s|%s|%s|%s): (.*)$" % (TAG, TAG3, DEMO, SPACE))
 DEMO_PROBE_RE = re.compile(r"PROBE (\d+) (\d+) ([0-9a-f]{6})$")
 DEMO_CHECK_RE = re.compile(r"CHECK part=(\w+) (PASS|FAIL)(.*)$")
 DEMO_BENCH_RE = re.compile(r"BENCH part=(\w+) frames=(\d+) secs=([\d.]+) fps=([\d.]+)$")
@@ -209,6 +218,9 @@ def glide_bat(args, profile):
     lines = ["@ECHO OFF", "CTTY COM1", "ECHO glide.bat: start", "A:\\FREEDOS\\BIN\\MEM.EXE", *status, "A:",
              "CD \\GLIDE", "SET LD_LIBRARY_PATH=A:/GLIDE", f"GLIDEDOS.EXE hold={args.hold} bench={args.bench}",
              "ECHO glide.bat: exit %ERRORLEVEL%"]
+    if args.glide3:
+        # wait=3: DOS's text screen a while first, for the check after GLIDEDOS.EXE's window closed
+        lines += [f"GLID3DOS.EXE wait=3 hold={args.hold} bench={args.bench}", "ECHO glide.bat: glide3 exit %ERRORLEVEL%"]
     if args.demo_bench > 0:
         # -nocom: CTTY COM1 sends its output there already; -wait: DOS's text screen shows a while first
         res = f" -res {args.demo_res}" if args.demo_res else ""
@@ -223,7 +235,7 @@ def glide_bat(args, profile):
     return "\r\n".join(lines) + "\r\n"
 
 
-def make_floppy(path, boot, files, glidedos, dxe, profile, args):
+def make_floppy(path, boot, files, glidedos, dxe, dxe3, profile, args):
     shutil.copyfile(boot, path)
     os.chmod(path, 0o644)
     tmp = os.path.dirname(path)
@@ -234,6 +246,9 @@ def make_floppy(path, boot, files, glidedos, dxe, profile, args):
         mtools("mcopy", "-o", "-i", path, p, f"::/{name}")
     mtools("mmd", "-i", path, "::/GLIDE")
     put = {"GLIDEDOS.EXE": glidedos, "GLIDE2X.DXE": dxe, **files}
+    if args.glide3:
+        put["GLID3DOS.EXE"] = os.path.join(args.bin, "GLID3DOS.EXE")
+        put["GLIDE3X.DXE"] = dxe3
     if args.demo_bench > 0:
         put["WSHDEMO.EXE"] = os.path.join(args.bin, "WSHDEMO.EXE")
     if args.space_audio:
@@ -246,26 +261,28 @@ def make_floppy(path, boot, files, glidedos, dxe, profile, args):
 # --- the drivers -----------------------------------------------------------------------------------
 
 def dxe_from_drivers(src, dest):
-    """GLIDE2X.DXE and VERSION.txt of a qemu-3dfx-drivers zip (or an unpacked release directory)."""
+    """GLIDE2X.DXE, GLIDE3X.DXE (None when the drivers have none) and VERSION.txt of a
+    qemu-3dfx-drivers zip (or an unpacked release directory)."""
     os.makedirs(dest, exist_ok=True)
+    want = ("glide2x.dxe", "glide3x.dxe", "version.txt")
     found = {}
     if os.path.isdir(src):
         for root, _, names in os.walk(src):
             for n in names:
-                if n.lower() in ("glide2x.dxe", "version.txt"):
+                if n.lower() in want:
                     found[n.lower()] = os.path.join(root, n)
     else:
         with zipfile.ZipFile(src) as zf:
             for info in zf.infolist():
                 n = os.path.basename(info.filename).lower()
-                if n in ("glide2x.dxe", "version.txt"):
+                if n in want:
                     found[n] = os.path.join(dest, n)
                     with zf.open(info) as s, open(found[n], "wb") as d:
                         shutil.copyfileobj(s, d)
     if "glide2x.dxe" not in found:
         raise SystemExit(f"dos-test: no glide2x.dxe in {src}")
     version = open(found["version.txt"], errors="replace").read() if "version.txt" in found else ""
-    return found["glide2x.dxe"], version
+    return found["glide2x.dxe"], found.get("glide3x.dxe"), version
 
 
 # --- a run -----------------------------------------------------------------------------------------
@@ -493,17 +510,39 @@ def space_audio_check(rs, wav):
         r["wav"] = w
 
 
-def run_profile(args, scene, profile, boot, files, dxe, accel):
+def glide3_line(res, text, mon, d, scene):
+    """One GLIDE3DOS line into res["glide3"]: the same test as GLIDEDOS.EXE's, through Glide 3."""
+    r = res["glide3"]
+    if text == "FRAME" and r["frame"] is None:
+        time.sleep(1)
+        r["frame"] = frame_check(scene, mon, os.path.join(d, "glide3-frame.ppm"))
+        log(f"{res['profile']}: Glide 3 screendump: {'probes match' if r['frame']['ok'] else r['frame']}")
+    elif text == "CLOSED" and r["after"] is None:
+        time.sleep(0.5)
+        r["after"] = after_check(scene, mon, os.path.join(d, "glide3-after.ppm"))
+    elif w3d.parse_bench(text):
+        r["bench"] = w3d.parse_bench(text)
+    elif w3d.verdict_of(text):
+        r["verdict"] = w3d.verdict_of(text)
+
+
+def glide3_passed(r):
+    return bool(r["verdict"] == "PASS" and r["frame"] and r["frame"]["ok"] and r["after"] and r["after"]["ok"])
+
+
+def run_profile(args, scene, profile, boot, files, dxe, dxe3, accel):
     d = os.path.join(args.out, profile)
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
     floppy = os.path.join(d, "glidedos.img")
-    contents = make_floppy(floppy, boot, files, os.path.join(args.bin, "GLIDEDOS.EXE"), dxe, profile, args)
+    contents = make_floppy(floppy, boot, files, os.path.join(args.bin, "GLIDEDOS.EXE"), dxe, dxe3, profile, args)
     serial_path = os.path.join(d, "serial.log")
     open(serial_path, "wb").close()
     vm = (PveVm if args.pve else LocalVm)(args, d, floppy, serial_path, accel)
     res = {"profile": profile, "config": PROFILES[profile], "floppy": contents, "verdict": None, "frame": None,
            "after": None, "bench": None}
+    if args.glide3:
+        res["glide3"] = {"verdict": None, "frame": None, "after": None, "bench": None}
     if args.demo_bench > 0:
         res["demo"] = {"checks": {}, "bench": {}, "probes": [], "frame": None, "after": None, "verdict": None}
     if args.space_audio:
@@ -514,7 +553,7 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
     t0 = time.monotonic()
     vm.start()
     serial = Serial(serial_path)
-    closed = audio_demo = False
+    audio_demo = False
     try:
         while True:
             for tag, text in serial.poll():
@@ -527,6 +566,9 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
                             res["demo_audio"]["audiotest"] = text[10:]
                         elif text == "PASS" or text.startswith("FAIL "):
                             res["demo_audio"]["verdict"] = text
+                elif tag == TAG3:
+                    if "glide3" in res:
+                        glide3_line(res, text, vm.mon, d, scene)
                 elif tag == DEMO:
                     if "demo" in res:
                         demo_line(res, text, vm.mon, d, scene, t0)
@@ -541,15 +583,13 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
                     res["frame"] = frame_check(scene, vm.mon, os.path.join(d, "frame.ppm"))
                     res["frame_s"] = round(time.monotonic() - t0, 1)
                     log(f"{profile}: screendump: {'probes match' if res['frame']['ok'] else res['frame']}")
+                elif text == "CLOSED" and res["after"] is None:
+                    time.sleep(0.5)
+                    res["after"] = after_check(scene, vm.mon, os.path.join(d, "after.ppm"))
                 elif w3d.parse_bench(text):
                     res["bench"] = w3d.parse_bench(text)
                 elif w3d.verdict_of(text):
                     res["verdict"] = w3d.verdict_of(text)
-            qlog = open(vm.qlog_path, errors="replace").read()
-            if not closed and "glidept: offscreen closed" in qlog:
-                closed = True
-                time.sleep(0.5)
-                res["after"] = after_check(scene, vm.mon, os.path.join(d, "after.ppm"))
             if not vm.running():
                 break
             if time.monotonic() - t0 > args.timeout:
@@ -576,10 +616,16 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
     res["passed"] = bool(res["verdict"] == "PASS" and res["frame"] and res["frame"]["ok"]
                          and res["after"] and res["after"]["ok"] and res["profile_ok"])
     demo = ""
+    if "glide3" in res:
+        g3 = res["glide3"]
+        g3["passed"] = glide3_passed(g3)
+        res["passed"] = res["passed"] and g3["passed"]
+        demo = (f", Glide 3 {'PASS' if g3['passed'] else 'FAIL'} (guest {g3['verdict']}, frame {g3['frame'] and g3['frame']['ok']}, "
+                f"VGA after {g3['after'] and g3['after']['ok']})")
     if "demo" in res:
         res["demo"]["passed"] = demo_passed(res["demo"])
         res["passed"] = res["passed"] and res["demo"]["passed"]
-        demo = f", demo {'PASS' if res['demo']['passed'] else 'FAIL'} {res['demo']['checks']} {res['demo']['bench']}"
+        demo += f", demo {'PASS' if res['demo']['passed'] else 'FAIL'} {res['demo']['checks']} {res['demo']['bench']}"
     if "space_audio" in res:
         audio = [("wshspace", res["space_audio"])] + ([("wshdemo", res["demo_audio"])] if "demo_audio" in res else [])
         space_audio_check([a for _, a in audio], os.path.join(d, "space-audio.wav"))
@@ -594,7 +640,7 @@ def run_profile(args, scene, profile, boot, files, dxe, accel):
 
 
 def summary_md(info, results):
-    lines = ["## Glide from DOS (FreeDOS, GLIDE2X.DXE)", "",
+    lines = ["## Glide from DOS (FreeDOS, GLIDE2X.DXE%s)" % (" and GLIDE3X.DXE" if any("glide3" in r for r in results) else ""), "",
              f"{info['qemu_version']}; guest drivers {info['drivers']}; {info['accel']}, cpu {info['cpu']}"
              f"{', PVE VM ' + str(info['pve']) if info['pve'] else ''}", "",
              "| Profile | Memory | Result | Guest | Console frame | VGA after | Frames/s | Read ms |",
@@ -608,6 +654,19 @@ def summary_md(info, results):
             ("probes match" if f["ok"] else f"{f.get('mismatches', '?')} mismatches {f.get('size', '')}") if f else "no frame",
             (f"yes ({a['size']})" if a["ok"] else f"no ({a.get('size', a.get('error'))})") if a else "not seen",
             f"{b['fps']:.0f}" if b else "-", f"{off['read_ms']}" if off else "-"))
+    g3s = [r for r in results if "glide3" in r]
+    if g3s:
+        lines += ["", "Glide 3 (GLID3DOS.EXE, GLIDE3X.DXE):", "",
+                  "| Profile | Result | Guest | Console frame | VGA after | Frames/s |",
+                  "| --- | --- | --- | --- | --- | --- |"]
+        for r in g3s:
+            g3 = r["glide3"]
+            f, a, b = g3["frame"], g3["after"], g3["bench"]
+            lines.append("| %s | %s | %s | %s | %s | %s |" % (
+                r["profile"], "pass" if g3["passed"] else "FAIL", g3["verdict"] or "no verdict",
+                ("probes match" if f["ok"] else f"{f.get('mismatches', '?')} mismatches {f.get('size', '')}") if f else "no frame",
+                (f"yes ({a['size']})" if a["ok"] else f"no ({a.get('size', a.get('error'))})") if a else "not seen",
+                f"{b['fps']:.0f}" if b else "-"))
     demos = [r for r in results if "demo" in r]
     if demos:
         lines += ["", "The demo (WSHDEMO.EXE -check -bench N, e2e/3dfx/demo):", "",
@@ -644,9 +703,13 @@ def summary_md(info, results):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--drivers", required=True, help="qemu-3dfx-drivers-<rev>.zip or its unpacked directory")
-    ap.add_argument("--bin", required=True, help="the directory with GLIDEDOS.EXE (build.sh) and WSHDEMO.EXE (demo/build-dos.sh)")
+    ap.add_argument("--bin", required=True, help="the directory with GLIDEDOS.EXE and GLID3DOS.EXE (build.sh) and "
+                    "WSHDEMO.EXE (demo/build-dos.sh)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--dxe", help="this GLIDE2X.DXE instead of the drivers' one")
+    ap.add_argument("--dxe3", help="this GLIDE3X.DXE instead of the drivers' one")
+    ap.add_argument("--glide3", action=argparse.BooleanOptionalAction, default=True,
+                    help="GLID3DOS.EXE (in --bin) with GLIDE3X.DXE after GLIDEDOS.EXE in each boot (default on)")
     ap.add_argument("--profiles", default="none,xms,emm386")
     ap.add_argument("--accel", default="auto", choices=["auto", "kvm", "tcg"])
     ap.add_argument("--cpu", default="pentium3", help="the guest CPU (the drivers are built for i586)")
@@ -668,6 +731,9 @@ def main():
             ap.error(f"unknown profile {p} (one of {', '.join(PROFILES)})")
     os.makedirs(args.out, exist_ok=True)
     args.out = os.path.abspath(args.out)
+    if args.glide3 and not os.path.exists(os.path.join(args.bin, "GLID3DOS.EXE")):
+        log(f"WARNING: no GLID3DOS.EXE in {args.bin}: the Glide 3 test is left out")
+        args.glide3 = False
     if args.demo_bench > 0 and not os.path.exists(os.path.join(args.bin, "WSHDEMO.EXE")):
         log(f"WARNING: no WSHDEMO.EXE in {args.bin}: the demo is left out")
         args.demo_bench = 0
@@ -690,20 +756,26 @@ def main():
         return 77
     work = os.path.join(args.out, ".work")
     os.makedirs(work, exist_ok=True)
-    dxe, drv_version = dxe_from_drivers(args.drivers, os.path.join(work, "drivers"))
+    dxe, dxe3, drv_version = dxe_from_drivers(args.drivers, os.path.join(work, "drivers"))
     if f"{rev}-" not in drv_version and rev not in os.path.basename(os.path.normpath(args.drivers)):
         log(f"WARNING: the drivers ({os.path.basename(args.drivers)}) don't name the binary's revision {rev}")
     if args.dxe:
         dxe = args.dxe
+    if args.dxe3:
+        dxe3 = args.dxe3
+    if args.glide3 and not dxe3:
+        raise SystemExit(f"dos-test: no glide3x.dxe in {args.drivers} (--no-glide3 leaves the Glide 3 test out)")
     boot, files = freedos_files(os.environ.get("FREEDOS_CACHE", "/var/cache/glidedos-freedos"), work)
     scene = w3d.parse_scene(open(w3d.SCENE_H).read())
     accel = args.accel
     if accel == "auto":
         accel = "kvm" if os.access("/dev/kvm", os.R_OK | os.W_OK) else "tcg"
     info = {"qemu_version": version, "rev": rev, "drivers": os.path.basename(os.path.normpath(args.drivers)),
-            "dxe_sha256": sha256(dxe), "accel": accel, "cpu": args.cpu, "pve": args.pve}
-    log(f"{version}; GLIDE2X.DXE {info['dxe_sha256'][:12]}; profiles {', '.join(profiles)}")
-    results = [run_profile(args, scene, p, boot, files, dxe, accel) for p in profiles]
+            "dxe_sha256": sha256(dxe), "dxe3_sha256": sha256(dxe3) if args.glide3 else None, "accel": accel,
+            "cpu": args.cpu, "pve": args.pve}
+    log(f"{version}; GLIDE2X.DXE {info['dxe_sha256'][:12]}"
+        f"{'; GLIDE3X.DXE ' + info['dxe3_sha256'][:12] if args.glide3 else ''}; profiles {', '.join(profiles)}")
+    results = [run_profile(args, scene, p, boot, files, dxe, dxe3, accel) for p in profiles]
     shutil.rmtree(work, ignore_errors=True)
     with open(os.path.join(args.out, "summary.json"), "w") as f:
         json.dump({"info": info, "results": results}, f, indent=1)

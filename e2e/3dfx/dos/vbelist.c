@@ -28,6 +28,19 @@
 
 static int com1;
 
+/* crt0 registers the program's unwind tables with libgcc's unwinder, which only C++ exceptions
+ * use. Defining the two entry points keeps that unwinder (built for the i686, with CMOV) out of the
+ * program; DJGPP's crt0 and libc themselves are i386 code. */
+void __register_frame_info(const void *begin, void *object)
+{
+	(void)begin, (void)object;
+}
+void *__deregister_frame_info(const void *begin)
+{
+	(void)begin;
+	return 0;
+}
+
 static void com1_init(void)
 {
 	/* the BIOS's COM1 base (0 without a serial port), then 115200 8N1 with the FIFO on */
