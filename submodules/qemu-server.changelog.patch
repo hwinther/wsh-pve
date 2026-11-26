@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index 3b036ceb..ebc63675 100644
+index 3b036ceb..7e2d66d8 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,23 @@
+@@ -1,10 +1,30 @@
++qemu-server (9.2.24+wsh3) trixie; urgency=medium
++
++  * feat(qemu-server): D-Bus display bus for an unprivileged container
++    (dbus-display-uids) (#542)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 26 Nov 2026 04:29:02 +0000
++
 +qemu-server (9.2.24+wsh2) trixie; urgency=medium
 +
 +  * fix(sparc): boot Solaris on SS-10/SS-20 with up to 2048 MB (#532)
