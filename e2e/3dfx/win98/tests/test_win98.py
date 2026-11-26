@@ -343,6 +343,34 @@ class Verdicts(unittest.TestCase):
         self.assertFalse(w.evaluate(r, ["opengl"]))
         self.assertIn("no verdict", r["tests"]["opengl"]["verdict"])
 
+    def test_accelerator_mismatch_fails_the_run(self):
+        r = self.result()
+        r["accel_ok"] = False
+        self.assertFalse(w.evaluate(r, ["glide2"]))
+        self.assertEqual(r["tests"]["glide2"]["verdict"], "PASS")
+
+
+class Accelerator(unittest.TestCase):
+    def test_kvm_from_info(self):
+        self.assertIs(w.kvm_from_info("info kvm\r\nkvm support: enabled\r\n(qemu) "), True)
+        self.assertIs(w.kvm_from_info("kvm support: disabled\r\n"), False)
+        self.assertIsNone(w.kvm_from_info("(monitor: [Errno 2] No such file or directory)"))
+        self.assertIsNone(w.kvm_from_info(None))
+
+    def test_accel_check(self):
+        self.assertEqual(w.accel_check("kvm", True), (True, "KVM (query-kvm: enabled)"))
+        ok, text = w.accel_check("kvm", False)
+        self.assertFalse(ok)
+        self.assertIn("runs in TCG", text)
+        self.assertFalse(w.accel_check("kvm", None)[0])
+        # an expected mismatch (an older qemu-server) is reported, not failed
+        ok, text = w.accel_check("kvm", False, "older qemu-server")
+        self.assertTrue(ok)
+        self.assertIn("known: older qemu-server", text)
+        ok, text = w.accel_check("tcg", False)
+        self.assertTrue(ok)
+        self.assertTrue(text.startswith("TCG"))
+
 
 class Pve(unittest.TestCase):
     def test_des_known_answers(self):

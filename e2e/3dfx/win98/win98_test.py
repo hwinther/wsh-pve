@@ -907,6 +907,29 @@ def after_check(args, scene, mon, priv, name, desktop):
         time.sleep(0.5)
 
 
+KVM_INFO_RE = re.compile(r"kvm support: (enabled|disabled)")
+
+
+def kvm_from_info(text):
+    """True or False from HMP `info kvm` ("kvm support: enabled"), None when it says neither."""
+    m = KVM_INFO_RE.search(text or "")
+    return None if not m else m.group(1) == "enabled"
+
+
+def accel_check(accel, kvm, known=None):
+    """The accelerator the VM really runs with against the one asked for: (ok, text). `kvm` is QEMU's
+    answer (query-kvm, `info kvm`): True, False or None (no answer). `known` explains a mismatch that
+    is expected (an installed qemu-server from before a fix): reported, not failed."""
+    if accel != "kvm":
+        return True, "TCG" + ("" if os.access("/dev/kvm", os.W_OK) else " (no /dev/kvm on this host)")
+    if kvm is True:
+        return True, "KVM (query-kvm: enabled)"
+    what = "no answer from QEMU about KVM" if kvm is None else "KVM asked for, but the VM runs in TCG"
+    if known:
+        return True, f"{what} (known: {known})"
+    return False, what
+
+
 class LocalVm:
     """QEMU started by the harness itself, as qemu_command() builds it."""
 
@@ -927,6 +950,18 @@ class LocalVm:
         self.qlog = open(os.path.join(self.out, "qemu.log"), "wb")
         log(f"QEMU ({self.accel}, {self.args.display}): {' '.join(self.cmd)}")
         self.proc = subprocess.Popen(self.cmd, stdout=self.qlog, stderr=subprocess.STDOUT, env=env, cwd=self.priv)
+
+    def kvm_enabled(self):
+        """Whether QEMU runs with KVM (`info kvm`); None when the monitor doesn't answer in time."""
+        for _ in range(20):
+            kvm = kvm_from_info(self.mon.cmd("info kvm"))
+            if kvm is not None:
+                return kvm
+            time.sleep(0.5)
+        return None
+
+    def accel_known(self):
+        return None
 
     def exited(self):
         """None while QEMU runs, else how it ended."""
@@ -1046,6 +1081,23 @@ class PveVm:
             # PVE's VNC socket always asks for a password (noVNC gets a ticket): set one of ours
             self.mon.cmd("set_password", protocol="vnc", password=PVE_VNC_PASSWORD)
 
+    def kvm_enabled(self):
+        """Whether the VM's QEMU runs with KVM (QMP query-kvm); None when QMP doesn't answer."""
+        try:
+            return bool(self.mon.cmd("query-kvm")["enabled"])
+        except (OSError, RuntimeError, KeyError, TypeError, ValueError):
+            return None
+
+    def accel_known(self):
+        """qemu-server up to 9.2.24+wsh3 left the 3dfx binary's accelerator to QEMU, which picks TCG
+        for a program whose name doesn't end in "kvm"."""
+        try:
+            with open("/usr/share/perl5/PVE/QemuServer.pm") as f:
+                fixed = "push @$machineFlags, 'accel=kvm';" in f.read()
+        except OSError:
+            return None
+        return None if fixed else "the installed qemu-server does not pass accel=kvm to the 3dfx binary yet"
+
     def exited(self):
         """None while the VM's QEMU runs (PVE gives no exit status)."""
         return None if os.path.exists(f"/proc/{self.pid}") else "the VM stopped (QEMU exited)"
@@ -1077,6 +1129,11 @@ def run_vm(args, scene, raw):
     mon = vm.mon
     ser = Serial(serial_path)
     res = {"accel": vm.accel, "display": args.display, "tests": {}, "events": []}
+    # what QEMU really runs with: a 3dfx VM started by PVE ran in TCG with KVM on before qemu-server
+    # passed accel=kvm to the 3dfx binary
+    res["kvm_enabled"] = vm.kvm_enabled()
+    res["accel_ok"], res["accel_check"] = accel_check(vm.accel, res["kvm_enabled"], vm.accel_known())
+    log(f"accelerator: {res['accel_check']}")
     if args.pve:
         res["pve_vmid"] = int(args.pve)
     for t in args.tests:
@@ -1201,7 +1258,7 @@ def evaluate(res, tests):
                 why.append("demo check failed or missing: " + ", ".join(failed))
         r["verdict"] = "PASS" if not why else "FAIL: " + "; ".join(why)
         all_ok &= not why
-    return all_ok
+    return all_ok and res.get("accel_ok", True)
 
 
 def summary_md(res, info):
@@ -1210,6 +1267,8 @@ def summary_md(res, info):
              f"(built for {info.get('drivers_baseline', 'x86-64-v2 (not stated)')}), "
              f"{res['accel']}, display {res['display']}, CPU {info['cpu']}"
              f"{', started by PVE (VM %d)' % res['pve_vmid'] if res.get('pve_vmid') else ''}", "",
+             f"Accelerator: {res.get('accel_check', 'not checked')}"
+             f"{'' if res.get('accel_ok', True) else ' (FAIL)'}", "",
              f"Boot to desktop {res.get('boot_s', '?')} s, total {res['total_s']} s, end: {res['status']}"
              f"{', powered off by Windows' if res.get('powered_off') else ''}", "",
              "| Test | Verdict | Guest | Console frame | Held frame | Windows back | Frame rate |",

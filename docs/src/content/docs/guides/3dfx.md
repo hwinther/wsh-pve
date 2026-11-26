@@ -29,6 +29,14 @@ To find the matching pair:
 2. Enable the **3DFX/Mesa** option in the [Display](/reference/display/) panel. When selected, the guest is started with the passthrough-patched `qemu-system-x86_64-3dfx` binary instead of the standard one.
 3. Leave **3DFX/Mesa display** at its default unless the node has a GPU (see [Choosing the display](#choosing-the-display-3dfxmesa-display)).
 
+### KVM
+
+A 3dfx VM runs with KVM when its **KVM hardware virtualization** option is on (`kvm: 1`, the default), and with TCG (QEMU's software emulation) only with `kvm: 0`, like any other VM. qemu-server passes `accel=kvm` in `-machine` to the 3dfx binary (`qm showcmd <vmid> --pretty` shows `-machine 'accel=kvm,...'`), and `accel=tcg` with `kvm: 0`. The standard binary gets neither with KVM on: qemu-server starts it as `/usr/bin/kvm`, and QEMU prefers KVM by default only when its program name ends in `kvm`. The 3dfx binary's name doesn't, so before this qemu-server left it at QEMU's default and every 3dfx VM ran in TCG, KVM option or not. In a Windows 98 guest on a node with VT-x, a Glide benchmark drew 12.4 frames per second that way and 200 with KVM.
+
+To check a running VM, open its monitor (`qm monitor <vmid>`, or the VM's **Monitor** panel) and enter `info kvm`: `kvm support: enabled` means KVM, `disabled` means TCG. With a qemu-server that doesn't pass `accel=kvm` to the 3dfx binary (up to 9.2.24+wsh3), `args: -accel kvm` in the VM's configuration gives it KVM.
+
+Figures in this guide measured with KVM on a 3dfx VM that PVE started (`qm start`), with a qemu-server up to 9.2.24+wsh3, were taken in TCG, unless the VM's `args` named the accelerator. Runs that started QEMU themselves (the tests' own QEMU command lines) passed the accelerator and are not affected.
+
 ## Glide on the host: wsh-openglide
 
 The Glide half of the pass-through renders with a host library: qemu-3dfx loads `libglide2x.so` (`libglide3x.so` for a Glide 3 guest) and hands it the guest's Glide calls. That library is OpenGLide, from [kjliew/qemu-xtra](https://github.com/kjliew/qemu-xtra), and the optional `wsh-openglide` package ships it:
@@ -157,6 +165,8 @@ e2e/3dfx/win98-test.sh ... -- --display egl --hold 9                            
 e2e/3dfx/win98-test.sh ... --openglide build/wsh-openglide/wsh-openglide_<version>_amd64.deb  # a wsh-openglide of your own
 e2e/3dfx/win98-test.sh ... --pve wsh-pve-e2e -- --display egl                      # PVE starts the VM (qm start)
 ```
+
+The harness asks the running VM which accelerator it has (`info kvm` through the monitor, `query-kvm` through PVE's QMP socket) and puts it in the summary (`Accelerator: KVM (query-kvm: enabled)`, or TCG, with "no /dev/kvm on this host" when there is none). With `--accel kvm`, or `auto` on a host with `/dev/kvm`, a VM that runs in TCG fails the run; with `--pve` and a qemu-server that doesn't pass `accel=kvm` to the 3dfx binary yet (see [KVM](#kvm)) it is reported as known instead. The Playwright test `e2e/tests/3dfx-accel.spec.ts` checks the same through PVE: a `mesa=1` VM in KVM with the KVM option on and in TCG with `kvm: 0` (the KVM half only where the runner has `/dev/kvm`, which GitHub's hosted runners have).
 
 `--display egl` gives QEMU `-display egl-headless` beside its VNC server and takes the pictures from the VNC server, as QEMU's screendump has none while a dmabuf is shown; `/dev/udmabuf` goes into the container when the host has it. Glide's frames go as a dmabuf with a `wsh-openglide` that exports one, which the published package does since 0.5 (`--openglide` installs another one over it); OpenGL's go as a dmabuf with the QEMU binary alone. With such a package (November 2026, KVM, `cpu: pentium3`) Glide 2 and Glide 3 pass as dmabufs at 960 to 970 frames per second (1540 to 1700 read back with `--display vnc` in the same setup), and OpenGL passes as a dmabuf too, at 600 to 770 frames per second (a copy of 0.9 to 1.1 ms; 2200 read back with `--display vnc`). The summary's table of QEMU's offscreen windows says for each how many frames went as a dmabuf and how many were read back, and whether it was double-buffered (QEMU and `wsh-openglide` from 0.8).
 

@@ -734,6 +734,32 @@ the sound, which works since `wsh/0170`, see below):
   `*PNPB003`, found by the Add New Hardware wizard), not tried here. It has none for the ES1370
   (no `VEN_1274` in its INFs), which qemu-server doesn't offer either.
 
+The VM above was started with `qm start` and a qemu-server that didn't pass `accel=kvm` to the 3dfx
+binary, so "KVM" there was most likely TCG: QEMU picks TCG by default for a binary whose name
+doesn't end in `kvm` (see [KVM in the 3dfx guide](/guides/3dfx/#kvm)). Check a VM with `info kvm` in
+its monitor.
+
+### Open issues seen on a node
+
+Seen while streaming a Windows 98 Glide VM through Wolf on a PVE node (November 2026). Not fixed;
+(b) and (c) are not understood yet.
+
+- **(a) Wolf's input bridge keeps the old VM bus after a VM restart.** After `qm stop` and `qm start`
+  of the VM, `wolf-input-bridge` stays connected to the D-Bus socket of the VM's previous run, so
+  the client's keyboard and mouse no longer reach the guest. Running `wolf-start <vmid>` again in
+  the container brings the input back. This should happen by itself (the bridge reconnecting when
+  the VM's bus goes away and comes back).
+- **(b) A Windows 98 guest with the USB tablet hung after its desktop loaded** while Moonlight sent
+  input early, twice, under TCG and under KVM. Whether the tablet is the cause is a suspicion only:
+  a run with `tablet: 0` (the PS/2 mouse) is being tested.
+- **(c) A fatal exception 0E in VWIN32** when `WSHSPACE.EXE` was quit with Escape, under TCG. Not
+  reproduced under KVM yet.
+- **(d) Scaling and conversion on the CPU.** With Moonlight at the client's native resolution,
+  Wolf's pipeline scales and converts the picture on the CPU (`videoscale`, `videoconvertscale`)
+  before `nvh264enc`. Wolf's own default apps upload to the GPU first and scale and convert there
+  (`cudaupload`, `cudaconvertscale`); doing the same in `wolf-config.py` for NVENC is a candidate
+  follow-up.
+
 ## VGA retrace
 
 `retrace=precise` (x86 only) switches QEMU to its precise VGA retrace emulation: reading the input
