@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..f0a69b3 100644
+index bc240a0..473461c 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,131 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,135 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -205,6 +205,10 @@ index bc240a0..f0a69b3 100644
 +wsh/0174-tests-qtest-test-the-SS-600MP-lance-s-loopback-recei.patch
 +wsh/0175-hw-sparc-sun4m-keep-the-SS-600MP-s-I-O-cache-tags-an.patch
 +wsh/0176-tests-qtest-test-the-SS-600MP-s-I-O-cache-tags-and-d.patch
++wsh/0177-hw-scsi-esp-don-t-keep-bit-5-of-the-SS-600MP-ESP-s-c.patch
++wsh/0178-tests-qtest-test-the-SS-600MP-ESP-s-configuration-re.patch
++wsh/0179-hw-dma-sparc32_dma-let-the-SS-600MP-s-ESC-take-only-.patch
++wsh/0180-tests-qtest-test-byte-only-access-to-the-SS-600MP-s-.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -26710,6 +26714,517 @@ index 0000000..131466f
 +     qtest_add_func("sun4m-ss600mp/lebuffer-memory", test_lebuffer_memory);
 +     qtest_add_func("sun4m-ss600mp/lance-in-lebuffer", test_lance_in_lebuffer);
 +     qtest_add_func("sun4m-ss600mp/lance-rap", test_lance_rap);
+diff --git a/debian/patches/wsh/0177-hw-scsi-esp-don-t-keep-bit-5-of-the-SS-600MP-ESP-s-c.patch b/debian/patches/wsh/0177-hw-scsi-esp-don-t-keep-bit-5-of-the-SS-600MP-ESP-s-c.patch
+new file mode 100644
+index 0000000..6e21d30
+--- /dev/null
++++ b/debian/patches/wsh/0177-hw-scsi-esp-don-t-keep-bit-5-of-the-SS-600MP-ESP-s-c.patch
+@@ -0,0 +1,155 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/scsi/esp: don't keep bit 5 of the SS-600MP ESP's
++ configuration register 2
++
++Sun's SPARCserver 600MP boot PROM tests the ESP's registers (progress
++0xe4 of its power-on self test, a loop on error otherwise): it writes a
++walking one and all ones to configuration register 2, each followed by
++a write elsewhere, and wants each value back without bit 5. QEMU's ESP
++keeps all eight bits, so the PROM's "configuration register #2
++write/write/read miscompare" check failed on bit 5 and on all ones.
++Configuration registers 1 and 3 pass as QEMU has them (the PROM checks
++all of register 1 and bits 2-0 of register 3).
++
++In SunOS's espreg.h bit 5 is the ESP236's byte control mode, a bit the
++FAS100A that QEMU's ESP reports in its unique ID doesn't list; bit 6
++(features enable on the FAS100A and FAS216) and bit 7 read back on the
++600MP.
++
++New sysbus-esp property cfg2-mask (default 0xff) and hwdef field
++esp_cfg2_mask, 0xdf on the SS-600MP only; the other machines keep all
++eight bits. SunOS's esp driver tells the chips apart by bits 3-0 of
++configuration register 2 and by whether configuration register 3 keeps
++what is written, and NetBSD's esp_sbus masks bits 7 and 5 (reserved in
++its ncr53c9xreg.h) before it compares, so the drivers see the same chip
++as before. No new state: the
++register keeps the masked value.
++---
++ hw/scsi/esp.c         | 12 +++++++++++-
++ hw/sparc/sun4m.c      | 19 +++++++++++++++++--
++ include/hw/scsi/esp.h |  2 ++
++ 3 files changed, 30 insertions(+), 3 deletions(-)
++
++diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
++index 1605a65..cbfb41e 100644
++--- a/hw/scsi/esp.c
+++++ b/hw/scsi/esp.c
++@@ -1374,8 +1374,11 @@ void esp_reg_write(ESPState *s, uint32_t saddr, uint64_t val)
++         break;
++     case ESP_WBUSID ... ESP_WSYNO:
++         break;
+++    case ESP_CFG2:
+++        s->rregs[saddr] = val & s->cfg2_mask;
+++        break;
++     case ESP_CFG1:
++-    case ESP_CFG2: case ESP_CFG3:
+++    case ESP_CFG3:
++     case ESP_RES3: case ESP_RES4:
++         s->rregs[saddr] = val;
++         break;
++@@ -1679,6 +1682,7 @@ static void sysbus_esp_realize(DeviceState *dev, Error **errp)
++     sysbus_init_irq(sbd, &s->drq_irq);
++     assert(sysbus->it_shift != -1);
++     s->irq_latency_ns = (int64_t)sysbus->irq_latency_us * SCALE_US;
+++    s->cfg2_mask = sysbus->cfg2_mask;
++ 
++     s->chip_id = TCHI_FAS100A;
++     memory_region_init_io(&sysbus->iomem, OBJECT(sysbus), &sysbus_esp_mem_ops,
++@@ -1711,6 +1715,11 @@ static void sysbus_esp_init(Object *obj)
++ static const Property sysbus_esp_properties[] = {
++     /* How long after an event its interrupt comes, 0 = at once */
++     DEFINE_PROP_UINT32("irq-latency-us", SysBusESPState, irq_latency_us, 0),
+++    /*
+++     * The bits configuration register 2 keeps. The SS-600MP's ESP doesn't
+++     * keep bit 5 (0xdf), which its boot PROM checks; the others keep all.
+++     */
+++    DEFINE_PROP_UINT8("cfg2-mask", SysBusESPState, cfg2_mask, 0xff),
++ };
++ 
++ static const VMStateDescription vmstate_sysbus_esp_scsi = {
++@@ -1751,6 +1760,7 @@ static void esp_init(Object *obj)
++ 
++     fifo8_create(&s->fifo, ESP_FIFO_SZ);
++     fifo8_create(&s->cmdfifo, ESP_CMDFIFO_SZ);
+++    s->cfg2_mask = 0xff;
++     s->irq_timer = timer_new_ns(QEMU_CLOCK_VIRTUAL, esp_irq_timer_cb, s);
++ }
++ 
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 2ca7566..a4b571d 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -123,6 +123,7 @@ struct sun4m_hwdef {
++     bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++     bool sbus_bus_errors;       /* buserr-trap, SBus write errors (M-to-S) */
++     bool esp_dma_esc;           /* the SCSI DMA is the ESC gate array */
+++    uint8_t esp_cfg2_mask;      /* if set: the bits the ESP's config 2 keeps */
++ };
++ 
++ struct Sun4mMachineClass {
++@@ -336,7 +337,8 @@ static void *sparc32_dma_init(hwaddr dma_base,
++                               hwaddr esp_base, qemu_irq espdma_irq,
++                               hwaddr le_base, qemu_irq ledma_irq,
++                               hwaddr lebuffer_base, uint32_t le_rap_mask,
++-                              bool le_am7990, bool esp_dma_esc, MACAddr *mac)
+++                              bool le_am7990, bool esp_dma_esc,
+++                              uint8_t esp_cfg2_mask, MACAddr *mac)
++ {
++     DeviceState *dma;
++     ESPDMADeviceState *espdma;
++@@ -377,6 +379,9 @@ static void *sparc32_dma_init(hwaddr dma_base,
++     if (esp_dma_esc) {
++         qdev_prop_set_bit(DEVICE(espdma), "esc", true);
++     }
+++    if (esp_cfg2_mask) {
+++        qdev_prop_set_uint8(DEVICE(esp), "cfg2-mask", esp_cfg2_mask);
+++    }
++     sysbus_realize_and_unref(SYS_BUS_DEVICE(dma), &error_fatal);
++     if (lebuffer_base) {
++         sysbus_mmio_map(SYS_BUS_DEVICE(dma), 1, lebuffer_base);
++@@ -1274,7 +1279,8 @@ static void sun4m_hw_init(MachineState *machine)
++                      hwdef->esp_base, slavio_irq[18],
++                      hwdef->le_base, slavio_irq[16],
++                      hwdef->lebuffer_base, hwdef->le_rap_mask,
++-                     hwdef->le_am7990, hwdef->esp_dma_esc, &hostid);
+++                     hwdef->le_am7990, hwdef->esp_dma_esc,
+++                     hwdef->esp_cfg2_mask, &hostid);
++ 
++     if (!graphic_width) {
++         graphic_width = 1024;
++@@ -1757,6 +1763,15 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          * and set the slave size error bit.
++          */
++         .esp_dma_esc = true,
+++        /*
+++         * Its ESP doesn't keep bit 5 of configuration register 2: the
+++         * boot PROM writes a walking one and all ones to it and wants each
+++         * back without that bit. SunOS's esp driver tells the chips apart
+++         * by bits 3-0 of that register and by configuration register 3,
+++         * so it sees the same chip as before. The other machines keep all
+++         * eight bits.
+++         */
+++        .esp_cfg2_mask = 0xdf,
++         .max_mem = 0xf00000000ULL,
++     };
++ 
++diff --git a/include/hw/scsi/esp.h b/include/hw/scsi/esp.h
++index 3bb4474..45e7423 100644
++--- a/include/hw/scsi/esp.h
+++++ b/include/hw/scsi/esp.h
++@@ -36,6 +36,7 @@ struct ESPState {
++     bool irq_pending;
++     bool drq_state;
++     uint8_t chip_id;
+++    uint8_t cfg2_mask;      /* the bits configuration register 2 keeps */
++     bool tchi_written;
++     int32_t ti_size;
++     uint32_t status;
++@@ -87,6 +88,7 @@ struct SysBusESPState {
++     MemoryRegion pdma;
++     uint32_t it_shift;
++     uint32_t irq_latency_us;
+++    uint8_t cfg2_mask;
++     ESPState esp;
++ };
++ 
+diff --git a/debian/patches/wsh/0178-tests-qtest-test-the-SS-600MP-ESP-s-configuration-re.patch b/debian/patches/wsh/0178-tests-qtest-test-the-SS-600MP-ESP-s-configuration-re.patch
+new file mode 100644
+index 0000000..5716a58
+--- /dev/null
++++ b/debian/patches/wsh/0178-tests-qtest-test-the-SS-600MP-ESP-s-configuration-re.patch
+@@ -0,0 +1,92 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP ESP's configuration register 2
++
++sun4m-ss600mp-test case esp-cfg2 for the previous patch: a walking one
++and all ones, each followed by a write to the lebuffer as the boot PROM
++does it, read back without bit 5; configuration register 1 keeps all
++eight bits; SunOS's esp attach sequence (bits 3-0 of register 2, then
++5 in register 3) reads back as before; the SS-10's ESP keeps bit 5.
++Fails without the previous patch.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 47 ++++++++++++++++++++++++++++++++
++ 1 file changed, 47 insertions(+)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index a10b967..a1d5f05 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -33,6 +33,13 @@
++  * slave size error bit, which a read of the control register clears.
++  * The SS-10's DMA2 reads ID 0xa and keeps more bits.
++  *
+++ * The 600MP's ESP doesn't keep bit 5 of configuration register 2: the
+++ * boot PROM writes a walking one and all ones to it, each followed by a
+++ * write elsewhere, and wants the value back without that bit. SunOS's
+++ * esp driver tells the chips apart by bits 3-0 of that register and by
+++ * configuration register 3, which read back as before. The SS-10's ESP
+++ * keeps all eight bits.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -59,6 +66,12 @@
++ #define ESC_CSR_MASK    0x00042b90
++ #define DMA_SLAVE_ERR   0x00000040
++ #define DMA_A_LOADED    0x04000000
+++#define ESP_REGS        0xef0080000ULL  /* behind the ESC, 4 bytes apart */
+++#define SS10_ESP_REGS   0xef0800000ULL
+++#define ESP_CFG1        0x8
+++#define ESP_CFG2        0xb
+++#define ESP_CFG3        0xc
+++#define ESP_CFG2_MASK   0xdf
++ /* the system interrupt pending register of the slavio interrupt controller */
++ #define INTCTL_PENDING  0xff1410000ULL
++ #define IRQ_LE          (1u << 16)
++@@ -417,6 +430,39 @@ static void test_dma_size_error(void)
++     qtest_quit(qts);
++ }
++ 
+++static void test_esp_cfg2(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    uint32_t bit;
+++
+++    /* as the PROM does it: a walking one, then all ones */
+++    for (bit = 1; bit <= 0x100; bit <<= 1) {
+++        uint8_t val = bit == 0x100 ? 0xff : bit;
+++
+++        qtest_writeb(qts, ESP_REGS + ESP_CFG2 * 4, val);
+++        qtest_writel(qts, LEBUFFER, ~(uint32_t)val);
+++        g_assert_cmphex(qtest_readb(qts, ESP_REGS + ESP_CFG2 * 4), ==,
+++                        val & ESP_CFG2_MASK);
+++    }
+++    /* configuration register 1 keeps all eight */
+++    qtest_writeb(qts, ESP_REGS + ESP_CFG1 * 4, 0xff);
+++    g_assert_cmphex(qtest_readb(qts, ESP_REGS + ESP_CFG1 * 4), ==, 0xff);
+++    /* SunOS's esp attach: config 2 bits 3-0, then config 3 */
+++    qtest_writeb(qts, ESP_REGS + ESP_CFG2 * 4, 0);
+++    qtest_writeb(qts, ESP_REGS + ESP_CFG2 * 4, 0xa);
+++    g_assert_cmphex(qtest_readb(qts, ESP_REGS + ESP_CFG2 * 4) & 0xf, ==, 0xa);
+++    qtest_writeb(qts, ESP_REGS + ESP_CFG3 * 4, 0);
+++    qtest_writeb(qts, ESP_REGS + ESP_CFG3 * 4, 5);
+++    g_assert_cmphex(qtest_readb(qts, ESP_REGS + ESP_CFG3 * 4), ==, 5);
+++    qtest_quit(qts);
+++
+++    /* the SS-10's ESP keeps bit 5 */
+++    qts = qtest_init("-machine SS-10 -m 64");
+++    qtest_writeb(qts, SS10_ESP_REGS + ESP_CFG2 * 4, 0xff);
+++    g_assert_cmphex(qtest_readb(qts, SS10_ESP_REGS + ESP_CFG2 * 4), ==, 0xff);
+++    qtest_quit(qts);
+++}
+++
++ static void test_ss10_unchanged(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-10 -m 64");
++@@ -442,6 +488,7 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-ss600mp/dma-csr", test_dma_csr);
++     qtest_add_func("sun4m-ss600mp/dma-count", test_dma_count);
++     qtest_add_func("sun4m-ss600mp/dma-size-error", test_dma_size_error);
+++    qtest_add_func("sun4m-ss600mp/esp-cfg2", test_esp_cfg2);
++     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
++ 
++     return g_test_run();
+diff --git a/debian/patches/wsh/0179-hw-dma-sparc32_dma-let-the-SS-600MP-s-ESC-take-only-.patch b/debian/patches/wsh/0179-hw-dma-sparc32_dma-let-the-SS-600MP-s-ESC-take-only-.patch
+new file mode 100644
+index 0000000..c2172a6
+--- /dev/null
++++ b/debian/patches/wsh/0179-hw-dma-sparc32_dma-let-the-SS-600MP-s-ESC-take-only-.patch
+@@ -0,0 +1,151 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/dma/sparc32_dma: let the SS-600MP's ESC take only byte
++ accesses to the ESP
++
++The SS-600MP boot PROM's ESP register test (progress 0xe4) goes on
++with a size check like the one for the ESC's own registers (wsh/0171):
++a halfword, word and doubleword load of configuration registers 1, 2
++and 3 must each trap 9 with SFSR 0x436 and the SFAR, and the ESC's
++control register must then read exactly 0x40000040 (device ID 4 and the
++slave size error bit). Then the same as stores, each expected to come
++back as an M-to-S write error with the ESC's bit set. QEMU's ESP failed
++the loads without touching the ESC and took a word store as a byte.
++
++On the 600MP the ESP's registers are reached through the ESC. With the
++esc property the SCSI DMA device now has a second MMIO region,
++"esc-esp", in front of the ESP's registers: a byte access goes to the
++ESP, any other size is answered with an error acknowledge (the CPU's
++bus error trap or the M-to-S write error from wsh/0159-0160) and sets
++the slave size error bit, which the next read of the control register
++returns and clears. The SS-600MP maps that region instead of the ESP's
++own; the other machines map the ESP as before. SunOS's esp driver uses
++byte accesses only. Trace event sparc32_dma_esc_esp_size_error; no new
++state.
++
++With this and the previous patches the PROM leaves progress 0xe4.
++---
++ hw/dma/sparc32_dma.c           | 55 ++++++++++++++++++++++++++++++++++
++ hw/dma/trace-events            |  1 +
++ hw/sparc/sun4m.c               |  7 ++++-
++ include/hw/sparc/sparc32_dma.h |  5 ++++
++ 4 files changed, 67 insertions(+), 1 deletion(-)
++
++diff --git a/hw/dma/sparc32_dma.c b/hw/dma/sparc32_dma.c
++index b82be30..cfe186b 100644
++--- a/hw/dma/sparc32_dma.c
+++++ b/hw/dma/sparc32_dma.c
++@@ -411,6 +411,55 @@ static void sparc32_espdma_device_init(Object *obj)
++     object_initialize_child(obj, "esp", &es->esp, TYPE_SYSBUS_ESP);
++ }
++ 
+++/*
+++ * The ESP's registers behind the ESC: a byte access goes to the ESP, any
+++ * other size is answered with an error acknowledge and sets the slave
+++ * size error bit, as for the ESC's own registers.
+++ */
+++static MemTxResult esc_esp_read(void *opaque, hwaddr addr, uint64_t *data,
+++                                unsigned size, MemTxAttrs attrs)
+++{
+++    ESPDMADeviceState *es = opaque;
+++    DMADeviceState *s = SPARC32_DMA_DEVICE(es);
+++
+++    if (size != 1) {
+++        s->dmaregs[0] |= DMA_SLAVE_ERR;
+++        trace_sparc32_dma_esc_esp_size_error(addr, size);
+++        return MEMTX_ERROR;
+++    }
+++    *data = esp_reg_read(&es->esp.esp, addr >> es->esp.it_shift);
+++    return MEMTX_OK;
+++}
+++
+++static MemTxResult esc_esp_write(void *opaque, hwaddr addr, uint64_t data,
+++                                 unsigned size, MemTxAttrs attrs)
+++{
+++    ESPDMADeviceState *es = opaque;
+++    DMADeviceState *s = SPARC32_DMA_DEVICE(es);
+++
+++    if (size != 1) {
+++        s->dmaregs[0] |= DMA_SLAVE_ERR;
+++        trace_sparc32_dma_esc_esp_size_error(addr, size);
+++        return MEMTX_ERROR;
+++    }
+++    esp_reg_write(&es->esp.esp, addr >> es->esp.it_shift, data);
+++    return MEMTX_OK;
+++}
+++
+++static const MemoryRegionOps esc_esp_ops = {
+++    .read_with_attrs = esc_esp_read,
+++    .write_with_attrs = esc_esp_write,
+++    .endianness = DEVICE_BIG_ENDIAN,
+++    .valid = {
+++        .min_access_size = 1,
+++        .max_access_size = 8,
+++    },
+++    .impl = {
+++        .min_access_size = 1,
+++        .max_access_size = 8,
+++    },
+++};
+++
++ static void sparc32_espdma_device_realize(DeviceState *dev, Error **errp)
++ {
++     DMADeviceState *s = SPARC32_DMA_DEVICE(dev);
++@@ -428,6 +477,12 @@ static void sparc32_espdma_device_realize(DeviceState *dev, Error **errp)
++     sysbus->it_shift = 2;
++     esp->dma_enabled = 1;
++     sysbus_realize(SYS_BUS_DEVICE(sysbus), &error_fatal);
+++
+++    if (s->esc) {
+++        memory_region_init_io(&es->esc_esp, OBJECT(s), &esc_esp_ops, es,
+++                              "esc-esp", ESP_REGS << sysbus->it_shift);
+++        sysbus_init_mmio(SYS_BUS_DEVICE(dev), &es->esc_esp);
+++    }
++ }
++ 
++ static void sparc32_espdma_device_class_init(ObjectClass *klass,
++diff --git a/hw/dma/trace-events b/hw/dma/trace-events
++index 1c4881d..0f8c159 100644
++--- a/hw/dma/trace-events
+++++ b/hw/dma/trace-events
++@@ -17,6 +17,7 @@ sparc32_dma_mem_readl(uint64_t addr, uint32_t ret) "read dmareg 0x%"PRIx64": 0x%
++ sparc32_dma_mem_writel(uint64_t addr, uint32_t old, uint32_t val) "write dmareg 0x%"PRIx64": 0x%08x -> 0x%08x"
++ sparc32_dma_enable_raise(void) "Raise DMA enable"
++ sparc32_dma_enable_lower(void) "Lower DMA enable"
+++sparc32_dma_esc_esp_size_error(uint64_t addr, unsigned size) "ESC slave size error at ESP register 0x%"PRIx64" size %u"
++ sparc32_dma_esc_size_error(uint64_t addr, unsigned size) "ESC slave size error at 0x%"PRIx64" size %u"
++ 
++ # i8257.c
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index a4b571d..8ddf8ce 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -393,7 +393,12 @@ static void *sparc32_dma_init(hwaddr dma_base,
++ 
++     sysbus_mmio_map(SYS_BUS_DEVICE(dma), 0, dma_base);
++ 
++-    sysbus_mmio_map(SYS_BUS_DEVICE(esp), 0, esp_base);
+++    if (esp_dma_esc) {
+++        /* the ESP's registers are reached through the ESC */
+++        sysbus_mmio_map(SYS_BUS_DEVICE(espdma), 1, esp_base);
+++    } else {
+++        sysbus_mmio_map(SYS_BUS_DEVICE(esp), 0, esp_base);
+++    }
++     scsi_bus_legacy_handle_cmdline(&esp->esp.bus);
++ 
++     sysbus_mmio_map(SYS_BUS_DEVICE(lance), 0, le_base);
++diff --git a/include/hw/sparc/sparc32_dma.h b/include/hw/sparc/sparc32_dma.h
++index 83de7e5..7f7fde1 100644
++--- a/include/hw/sparc/sparc32_dma.h
+++++ b/include/hw/sparc/sparc32_dma.h
++@@ -35,6 +35,11 @@ struct ESPDMADeviceState {
++     DMADeviceState parent_obj;
++ 
++     SysBusESPState esp;
+++    /*
+++     * With the ESC: the ESP's registers as the board maps them, behind
+++     * the ESC, which takes only byte accesses there (sysbus MMIO 1).
+++     */
+++    MemoryRegion esc_esp;
++ };
++ 
++ #define TYPE_SPARC32_LEDMA_DEVICE "sparc32-ledma"
+diff --git a/debian/patches/wsh/0180-tests-qtest-test-byte-only-access-to-the-SS-600MP-s-.patch b/debian/patches/wsh/0180-tests-qtest-test-byte-only-access-to-the-SS-600MP-s-.patch
+new file mode 100644
+index 0000000..3e7825c
+--- /dev/null
++++ b/debian/patches/wsh/0180-tests-qtest-test-byte-only-access-to-the-SS-600MP-s-.patch
+@@ -0,0 +1,89 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test byte-only access to the SS-600MP's ESP
++ registers
++
++sun4m-ss600mp-test case esp-size-error for the previous patch: the
++esc-esp region over the ESP's registers and no esp-regs on the
++SS-600MP; byte accesses reach the ESP and leave the ESC's control
++register alone; halfword, word and doubleword loads and stores each set
++the slave size error bit, a read of the control register clears it, and
++the stores go nowhere; the SS-10 maps the ESP's own region, takes a
++word store as before and its DMA2 gets no slave size error. Fails
++without the previous patch.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 48 ++++++++++++++++++++++++++++++++
++ 1 file changed, 48 insertions(+)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index a1d5f05..31225e5 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -40,6 +40,11 @@
++  * configuration register 3, which read back as before. The SS-10's ESP
++  * keeps all eight bits.
++  *
+++ * The ESP's registers are behind the ESC, which takes only byte accesses
+++ * there: a halfword, word or doubleword fails and sets the ESC's slave
+++ * size error bit, as for its own registers. The SS-10 maps the ESP
+++ * directly.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -463,6 +468,48 @@ static void test_esp_cfg2(void)
++     qtest_quit(qts);
++ }
++ 
+++static void test_esp_size_error(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++
+++    g_assert_true(has_region(mtree,
+++                  "0000000ef0080000-0000000ef008003f (prio 0, i/o): esc-esp"));
+++    g_assert_null(strstr(mtree, "esp-regs"));
+++    /* bytes go to the ESP and leave the ESC alone */
+++    qtest_writeb(qts, ESP_REGS + ESP_CFG1 * 4, 0x47);
+++    g_assert_cmphex(qtest_readb(qts, ESP_REGS + ESP_CFG1 * 4), ==, 0x47);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID);
+++    /* as the PROM does it: halfword, word, doubleword loads */
+++    qtest_readw(qts, ESP_REGS + ESP_CFG1 * 4);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID);
+++    qtest_readl(qts, ESP_REGS + ESP_CFG2 * 4);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    qtest_readq(qts, ESP_REGS + ESP_CFG3 * 4);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    /* and stores, which go nowhere */
+++    qtest_writel(qts, ESP_REGS + ESP_CFG1 * 4, 0x12);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    qtest_writew(qts, ESP_REGS + ESP_CFG1 * 4, 0x12);
+++    qtest_writeq(qts, ESP_REGS + ESP_CFG1 * 4, 0x12);
+++    g_assert_cmphex(qtest_readb(qts, ESP_REGS + ESP_CFG1 * 4), ==, 0x47);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID);
+++    qtest_quit(qts);
+++
+++    /* the SS-10 maps the ESP itself, and its DMA2 sets no such bit */
+++    qts = qtest_init("-machine SS-10 -m 64");
+++    g_free(mtree);
+++    mtree = qtest_hmp(qts, "info mtree");
+++    g_assert_nonnull(strstr(mtree, "esp-regs"));
+++    g_assert_null(strstr(mtree, "esc-esp"));
+++    qtest_writel(qts, SS10_ESP_REGS + ESP_CFG1 * 4, 0x12);
+++    g_assert_cmphex(qtest_readb(qts, SS10_ESP_REGS + ESP_CFG1 * 4), ==, 0x12);
+++    g_assert_cmphex(qtest_readl(qts, SS10_DMA_CSR) & DMA_SLAVE_ERR, ==, 0);
+++    qtest_quit(qts);
+++}
+++
++ static void test_ss10_unchanged(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-10 -m 64");
++@@ -489,6 +536,7 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-ss600mp/dma-count", test_dma_count);
++     qtest_add_func("sun4m-ss600mp/dma-size-error", test_dma_size_error);
++     qtest_add_func("sun4m-ss600mp/esp-cfg2", test_esp_cfg2);
+++    qtest_add_func("sun4m-ss600mp/esp-size-error", test_esp_size_error);
++     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
++ 
++     return g_test_run();
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
