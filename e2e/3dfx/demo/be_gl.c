@@ -20,7 +20,7 @@ static unsigned names[TEX_COUNT];
 static int levels_of[TEX_COUNT], size_of[TEX_COUNT], opened, mode2d = -1, read_w;
 static char version[128];
 static uint8_t texbuf[256 * 256 * 4];
-static uint8_t pixels[1024 * 768 * 4];
+static uint8_t pixels[MAX_PIXELS * 4];
 
 /* RGBA bytes from ARGB words */
 static void to_rgba(const uint32_t *argb, uint32_t n)
@@ -34,7 +34,11 @@ static void to_rgba(const uint32_t *argb, uint32_t n)
 
 static int gl_res_ok(int w, int h)
 {
-	return (w == 640 && h == 480) || (w == 800 && h == 600) || (w == 1024 && h == 768);
+	static const short m[][2] = {{640, 480}, {800, 600}, {1024, 768}, {1280, 960}, {1280, 1024}, {1600, 1200}, {1920, 1080}};
+	for (unsigned i = 0; i < sizeof(m) / sizeof(m[0]); i++)
+		if (m[i][0] == w && m[i][1] == h)
+			return 1;
+	return 0;
 }
 
 static void projection(int two_d)

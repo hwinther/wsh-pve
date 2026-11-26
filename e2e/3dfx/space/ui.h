@@ -36,6 +36,13 @@ static void add_probe(int x, int y, int r, int g, int b, const char *what)
 	p->what = what;
 }
 
+/* The text size of the HUD and overlays for a layout unit u (the height / 480): 1 to 600 lines,
+ * 1.5 to 1024, 2 from 1080 (it stays narrow enough for the console wells at 1280x1024) */
+static float text_scale(float u)
+{
+	return u >= 2.2f ? 2.0f : u >= 1.5f ? 1.5f : 1.0f;
+}
+
 static void draw_bar(float x, float y, float w, float h, float frac, uint32_t col, uint32_t bg)
 {
 	frac = clampf(frac, 0.0f, 1.0f);
@@ -66,6 +73,7 @@ static void draw_radar(float cx, float cy, float rx, float ry)
 	r_line2d(cx, cy, cx + rx * 0.55f, cy - ry * 0.82f, 1.0f, 0x9040b0ffU);
 
 	const float range = 900.0f;
+	const float k = ry * (1.0f / 50.4f); /* the blips grow with the screen (1 at 480 lines) */
 	/* Station blip (bright green) */
 	if (gs.has_station) {
 		v3f v = world_to_view(gs.st_pos);
@@ -73,7 +81,7 @@ static void draw_radar(float cx, float cy, float rx, float ry)
 		float py = clampf(v.y / range, -0.6f, 0.6f);
 		float bx = cx + px * rx, bz = cy - pz * ry, by = bz - py * ry * 0.9f;
 		r_line2d(bx, bz, bx, by, 1.2f, 0xa040ff80U);
-		r_rect(bx - 3.0f, by - 3.0f, bx + 3.0f, by + 3.0f, 0xff40ff80U);
+		r_rect(bx - 3.0f * k, by - 3.0f * k, bx + 3.0f * k, by + 3.0f * k, 0xff40ff80U);
 	}
 	/* Asteroids (amber / ore-tinted) */
 	for (int i = 0; i < MAX_AST; i++) {
@@ -86,7 +94,7 @@ static void draw_radar(float cx, float cy, float rx, float ry)
 		float by = bz - clampf(v.y / range, -0.55f, 0.55f) * ry * 0.85f;
 		uint32_t col = ore_cols[gs.ast[i].ore];
 		r_line2d(bx, bz, bx, by, 1.0f, (col & 0x00ffffffU) | 0x70000000U);
-		r_rect(bx - 1.5f, by - 1.5f, bx + 1.5f, by + 1.5f, col);
+		r_rect(bx - 1.5f * k, by - 1.5f * k, bx + 1.5f * k, by + 1.5f * k, col);
 	}
 	/* Crystals (cyan) */
 	for (int i = 0; i < MAX_CRYSTALS; i++) {
@@ -96,7 +104,7 @@ static void draw_radar(float cx, float cy, float rx, float ry)
 		if (v.x * v.x + v.y * v.y + v.z * v.z > range * range)
 			continue;
 		float bx = cx + (v.x / range) * rx, bz = cy - (v.z / range) * ry;
-		r_rect(bx - 1.5f, bz - 1.5f, bx + 1.5f, bz + 1.5f, 0xff80ffffU);
+		r_rect(bx - 1.5f * k, bz - 1.5f * k, bx + 1.5f * k, bz + 1.5f * k, 0xff80ffffU);
 	}
 	/* Hostile Drones (bright red) */
 	for (int i = 0; i < MAX_DRONES; i++) {
@@ -108,7 +116,7 @@ static void draw_radar(float cx, float cy, float rx, float ry)
 		float bx = cx + (v.x * s / range) * rx, bz = cy - (v.z * s / range) * ry;
 		float by = bz - clampf(v.y / range, -0.6f, 0.6f) * ry * 0.9f;
 		r_line2d(bx, bz, bx, by, 1.4f, 0xc0ff3030U);
-		r_rect(bx - 2.5f, by - 2.5f, bx + 2.5f, by + 2.5f, 0xffff3030U);
+		r_rect(bx - 2.5f * k, by - 2.5f * k, bx + 2.5f * k, by + 2.5f * k, 0xffff3030U);
 	}
 }
 
@@ -254,7 +262,7 @@ static void draw_cockpit_hud(void)
 
 	/* Text readouts on Cockpit & Top Banner */
 	r_text_state();
-	float ts = u >= 1.5f ? 1.5f : 1.0f;
+	float ts = text_scale(u);
 	r_text(lx + 6.0f * u, ly + 8.0f * u,  ts, 0xff80e0ffU, "SHLD");
 	r_text(lx + 6.0f * u, ly + 22.0f * u, ts, 0xff80ffa0U, "HULL");
 	r_text(lx + 6.0f * u, ly + 36.0f * u, ts, 0xffffd080U, "ENRG");
@@ -343,7 +351,7 @@ static void draw_starmap_overlay(double t)
 	}
 
 	r_text_state();
-	float ts = u >= 1.5f ? 1.5f : 1.0f;
+	float ts = text_scale(u);
 	r_text(mx0, y0 + 10.0f * u, ts * 1.3f, 0xff80e8ffU, "SECTOR GALAXY STARMAP");
 
 	/* Selected system details panel on the right */
@@ -381,7 +389,7 @@ static void draw_upgrade_overlay(void)
 	r_box_outline(x0, y0, x1, y1, 2.0f * u, gs.near_station ? 0xff50ff90U : 0xff40b8ffU);
 
 	r_text_state();
-	float ts = u >= 1.5f ? 1.5f : 1.0f;
+	float ts = text_scale(u);
 	const char *hdr = gs.near_station ? "ORBITAL OUTPOST ENGINEERING BAY" : "SHIPBOARD FIELD SYNTHESIZER";
 	r_text(x0 + 20.0f * u, y0 + 14.0f * u, ts * 1.3f, 0xff70ff98U, hdr);
 
@@ -424,7 +432,8 @@ static void draw_title_overlay(double t)
 	r_quad_raw(&p3, &p2, &p4, &p5);
 
 	r_text_state();
-	float big = H >= 600 ? 5.0f : 4.0f, sm = H >= 600 ? 2.0f : 1.5f, xs = H >= 600 ? 1.5f : 1.0f;
+	float big = H >= 1000 ? 8.0f : H >= 600 ? 5.0f : 4.0f, sm = H >= 1000 ? 3.0f : H >= 600 ? 2.0f : 1.5f;
+	float xs = H >= 1000 ? 2.5f : H >= 600 ? 1.5f : 1.0f;
 	const char *title = "WSHSPACE";
 	r_text((W - r_text_w(title, big)) * 0.5f, by - 3.5f * big, big, 0xffffffffU, title);
 	const char *sub = "PROCEDURAL 3DFX SPACE EXPLORATION & ASTEROID MINING";
@@ -448,7 +457,7 @@ static void draw_title_overlay(double t)
 /* Frame-rate & frame-time graph overlay (F key) */
 static void draw_fps_hud(double gamma)
 {
-	float u = space_view.h >= 600 ? 2.0f : 1.0f, x0 = 54.0f * u, y0 = 26.0f * u;
+	float u = space_view.h >= 1000 ? 3.0f : space_view.h >= 600 ? 2.0f : 1.0f, x0 = 54.0f * u, y0 = 26.0f * u;
 	r_state(-1, BLEND_ALPHA, 0, 0, 1, 0, 1);
 	r_rect(x0, y0, x0 + 144.0f * u, y0 + 54.0f * u, 0xa0000000U);
 	for (int i = 0; i < GRAPH_N; i++) {

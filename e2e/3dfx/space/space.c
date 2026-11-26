@@ -1386,7 +1386,7 @@ static void draw_warp_scene(double t)
 	}
 
 	r_text_state();
-	float W = (float)space_view.w, H = (float)space_view.h, sc = H >= 600 ? 2.5f : 2.0f;
+	float W = (float)space_view.w, H = (float)space_view.h, sc = H >= 1000 ? 4.0f : H >= 600 ? 2.5f : 2.0f;
 	char msg[64];
 	space_fmt(msg, sizeof(msg), "HYPERSPACE JUMP -> %s", dst->name);
 	r_text((W - r_text_w(msg, sc)) * 0.5f, H * 0.36f, sc, 0xffffffffU, msg);
@@ -1441,7 +1441,8 @@ static int run_check(void)
 	float W = (float)space_view.w, H = (float)space_view.h, u = H / 480.0f;
 	/* Probe inside dark right console panel & deep space sky */
 	add_probe((int)(W - 24.0f * u), (int)(H * 0.94f), 10, 18, 28, "cockpit right console well");
-	add_probe((int)(W * 0.5f), (int)(H * 0.865f), 8, 22, 36, "cockpit holo-radar center");
+	/* a little below the radar's center: the forward cone's lines start at the center itself */
+	add_probe((int)(W * 0.5f), (int)(H * 0.865f + 4.0f * u), 8, 22, 36, "cockpit holo-radar center");
 	failed += read_and_check("cockpit");
 	be->swap(1);
 
@@ -1483,7 +1484,10 @@ static void run_bench(int frames)
 
 /* --- display setup & interactive main loop ---------------------------------------------------- */
 
-static const int RES[3][2] = {{640, 480}, {800, 600}, {1024, 768}};
+/* The sizes -res and R offer, smallest first; each backend's res_ok says which it can open */
+static const int RES[][2] = {{640, 480}, {856, 480}, {800, 600}, {960, 720}, {1024, 768},
+			     {1280, 960}, {1280, 1024}, {1600, 1200}, {1920, 1080}};
+#define NRES (int)(sizeof(RES) / sizeof(RES[0]))
 static const double GAMMAS[6] = {1.0, 1.2, 1.4, 1.7, 2.0, 0.8};
 
 static void upload_textures(void)
@@ -1521,7 +1525,7 @@ static int run_game(int total_secs, int show_hud, int start_auto, uint32_t seed)
 	}
 
 	int gi = 0, ri = 0;
-	for (int i = 0; i < 3; i++)
+	for (int i = 0; i < NRES; i++)
 		if (RES[i][0] == space_view.w && RES[i][1] == space_view.h)
 			ri = i;
 
@@ -1588,7 +1592,7 @@ static int run_game(int total_secs, int show_hud, int start_auto, uint32_t seed)
 			} else if (k == 'r' || k == 'R') {
 				int ow = space_view.w, oh = space_view.h, n = ri;
 				do
-					n = (n + 1) % 3;
+					n = (n + 1) % NRES;
 				while (n != ri && !be->res_ok(RES[n][0], RES[n][1]));
 				if (n != ri) {
 					be->close(0);
@@ -1746,7 +1750,13 @@ int space_main(int argc, char **argv, const struct backend *backend)
 	const char *mode = check && bench ? "check+bench" : check ? "check" : bench ? "bench" : start_auto ? "auto" : "game";
 	space_log("START api=%s res=%dx%d mode=%s", be->api, w, h, mode);
 	if (!be->res_ok(w, h)) {
-		space_log("ERROR %s can't open %dx%d", be->api, w, h);
+		char ok[160];
+		int len = 0;
+		ok[0] = 0;
+		for (int i = 0; i < NRES; i++)
+			if (be->res_ok(RES[i][0], RES[i][1]))
+				len += space_fmt(ok + len, (int)sizeof(ok) - len, "%s%dx%d", len ? " " : "", RES[i][0], RES[i][1]);
+		space_log("ERROR %s can't open %dx%d (it can: %s)", be->api, w, h, ok);
 		space_log("CLOSED");
 		return 2;
 	}

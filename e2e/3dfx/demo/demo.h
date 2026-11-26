@@ -75,6 +75,9 @@ struct backend {
 	int (*res_ok)(int w, int h);               /* whether the API can open this size */
 };
 
+/* The largest frame a backend opens (OpenGL's 1920x1080), for the read-back buffers */
+#define MAX_PIXELS (1920 * 1080)
+
 /* --- provided by the front end ---------------------------------------------------------------- */
 
 uint32_t plat_us(void);            /* microseconds, any origin (wraps) */

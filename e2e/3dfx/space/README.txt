@@ -39,13 +39,17 @@ Controls
   U                 Open / close Outpost Engineering & Field Synthesizer (1..6 to build)
   F                 Toggle frame-rate & frame-time graph
   G / Shift+G       Gamma up / down
-  R                 Cycle resolution: 640x480, 800x600, 1024x768
+  R                 Cycle through the resolutions the API can do (see -res)
   Esc               Close overlay, or quit from cockpit
 
 Options
   -api glide2|glide3|opengl   (Windows) select renderer directly
   -hostgl         (Windows) allow system OPENGL32.DLL in a window for host testing
-  -res WxH        start at 640x480 (default), 800x600 or 1024x768
+  -res WxH        start at this size (default 640x480). Glide 2 and Glide 3: 640x480, 856x480,
+                  800x600, 960x720, 1024x768, 1280x1024, 1600x1200 (Glide's own modes up to 0xe;
+                  qemu-3dfx refuses Glide 3's larger ones, such as 1280x960 and 2048x1536).
+                  OpenGL: 640x480, 800x600, 1024x768, 1280x960, 1280x1024, 1600x1200, 1920x1080.
+                  Another size is refused with the list the API can do
   -auto           autopilot demo mode (flies, mines, fights and jumps automatically)
   -seed N         custom galaxy seed
   -nosound        disable procedural synth audio

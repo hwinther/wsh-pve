@@ -11,6 +11,8 @@
 #                  DXE at run time, so the program works with the GLIDE2X.DXE of the drivers release
 #   glide2x.dxe    the wrapper built here as well, with __REV__ = REV (the revision the host binary
 #                  names); the test uses the release's, this one is for comparison
+#   VBELIST.EXE    lists the video BIOS's VESA modes (vbelist.c), a tool for DOS guests; its code is
+#                  checked with scripts/check-3dfx-drivers-isa.sh --no-p6
 #
 # Everything for a Pentium (-march=pentium), as the drivers release. /src is this repository with
 # submodules/qemu-3dfx checked out. Copyright 2026 WsHosting ENK, GPL-3.
@@ -33,6 +35,11 @@ $CC -march=pentium -I"$Q3/wrappers/3dfx/src" -I"$Q3/qemu-0/hw/3dfx" -D__REV__="\
 $CC -march=pentium -O2 -Wall -Werror -I"$SRC/packages/wsh-openglide/tests" -o "$work/glidedos.exe" \
 	"$SRC/e2e/3dfx/dos/glidedos.c" "$work/libfxgl2.a"
 
+$CC -march=pentium -O2 -Wall -Werror -S -o "$work/vbelist.s" "$SRC/e2e/3dfx/dos/vbelist.c"
+$CC -s -o "$work/vbelist.exe" "$work/vbelist.s"
+"$SRC/scripts/check-3dfx-drivers-isa.sh" --no-p6 "$work/vbelist.s"
+
 cp "$work/glidedos.exe" "$OUT/GLIDEDOS.EXE"
+cp "$work/vbelist.exe" "$OUT/VBELIST.EXE"
 cp "$work/libfxgl2.a" "$work/glide2x.dxe" "$OUT/"
 ls -l "$OUT"

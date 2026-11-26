@@ -76,6 +76,9 @@ struct backend {
 	int (*res_ok)(int w, int h);
 };
 
+/* The largest frame a backend opens (OpenGL's 1920x1080), for the read-back buffers */
+#define MAX_PIXELS (1920 * 1080)
+
 /* Continuous flight controls + discrete special keys */
 enum {
 	IN_PITCH_UP   = 1 << 0,

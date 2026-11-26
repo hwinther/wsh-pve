@@ -35,6 +35,7 @@ the frame and the VGA came back.
 
 Then, in the same boot, GLIDE.BAT runs the demo (e2e/3dfx/demo, WSHDEMO.EXE from --bin, built by
 its build-dos.sh) with `-check -bench N -hold S -wait 3 -nocom` (--demo-bench N, 0 leaves it out;
+--demo-res WxH adds `-res WxH`;
 -wait shows DOS's text screen for 3 s first, -nocom leaves COM1 to CTTY): it draws a fixed
 frame of each of its parts, reads each back and checks its probes ("WSHDEMO: CHECK part=<name>
 PASS"), prints each part's frame rate, holds the last frame and prints its probes ("WSHDEMO: PROBE x
@@ -210,7 +211,8 @@ def glide_bat(args, profile):
              "ECHO glide.bat: exit %ERRORLEVEL%"]
     if args.demo_bench > 0:
         # -nocom: CTTY COM1 sends its output there already; -wait: DOS's text screen shows a while first
-        lines += [f"WSHDEMO.EXE -check -bench {args.demo_bench} -hold {args.hold} -wait 3 -nocom",
+        res = f" -res {args.demo_res}" if args.demo_res else ""
+        lines += [f"WSHDEMO.EXE -check -bench {args.demo_bench} -hold {args.hold} -wait 3 -nocom{res}",
                   "ECHO glide.bat: demo exit %ERRORLEVEL%"]
     if args.space_audio:
         lines += [f"SET BLASTER={SPACE_BLASTER}", "WSHSPACE.EXE -audiotest -nocom",
@@ -653,6 +655,7 @@ def main():
     ap.add_argument("--hold", type=int, default=5)
     ap.add_argument("--demo-bench", type=int, default=300, help="frames per part for the demo (WSHDEMO.EXE in --bin) "
                     "after the test program; 0: no demo")
+    ap.add_argument("--demo-res", metavar="WxH", help="the demo's -res (default its own, 640x480)")
     ap.add_argument("--space-audio", action=argparse.BooleanOptionalAction, default=True,
                     help="wshspace -audiotest (WSHSPACE.EXE in --bin) on an sb16 last in each boot (default on)")
     ap.add_argument("--timeout", type=int, default=300)

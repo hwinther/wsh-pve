@@ -44,7 +44,7 @@ Keys
   Space          next part
   G / Shift+G    gamma up / down (grGammaCorrectionValue, guGammaCorrectionRGB, or
                  wglSetDeviceGammaRamp3DFX)
-  R              next resolution: 640x480, 800x600, 1024x768
+  R              next resolution the API can do (see -res), smallest first
   F              frame rate and frame-time graph on or off
   M              music off (muted) or on again
   Esc            quit (the desktop or the text screen comes back)
@@ -52,7 +52,11 @@ Keys
 Options
   -api glide2|glide3|opengl   (Windows) the API; without it a window asks
   -hostgl         (Windows) allow system OPENGL32.DLL in a window for host testing
-  -res WxH        start at 640x480 (default), 800x600 or 1024x768
+  -res WxH        start at this size (default 640x480). Glide 2 and Glide 3: 640x480, 856x480,
+                  800x600, 960x720, 1024x768, 1280x1024, 1600x1200 (Glide's own modes up to 0xe;
+                  qemu-3dfx refuses Glide 3's larger ones, such as 1280x960 and 2048x1536).
+                  OpenGL: 640x480, 800x600, 1024x768, 1280x960, 1280x1024, 1600x1200, 1920x1080.
+                  Another size is refused with the list the API can do
   -part NAME      start with cube, tunnel or plasma (no title card); -secs S: seconds per part
   -time S         quit after S seconds; -gamma G: start with this gamma; -nohud: no frame rate
   -nosound        no music (the sound device isn't opened)

@@ -34,7 +34,7 @@ static uint32_t tex_next, tex_max;
 static int inited, opened;
 static char version[80];
 static uint16_t texbuf[256 * 256 * 4 / 3 + 1];
-static uint16_t lfb[1024 * 768];
+static uint16_t lfb[GLIDE_MAX_PIXELS];
 static int read_w;
 static float fog_start = -1, fog_end = -1;
 static uint32_t fog_rgb;
@@ -79,9 +79,23 @@ static int lod_of(int size)
 	return l;
 }
 
+int glide_res(int w, int h)
+{
+	static const short m[][3] = {
+		{640, 480, GR_RESOLUTION_640x480}, {856, 480, GR_RESOLUTION_856x480},
+		{800, 600, GR_RESOLUTION_800x600}, {960, 720, GR_RESOLUTION_960x720},
+		{1024, 768, GR_RESOLUTION_1024x768}, {1280, 1024, GR_RESOLUTION_1280x1024},
+		{1600, 1200, GR_RESOLUTION_1600x1200},
+	};
+	for (unsigned i = 0; i < sizeof(m) / sizeof(m[0]); i++)
+		if (m[i][0] == w && m[i][1] == h)
+			return m[i][2];
+	return -1;
+}
+
 static int g2_res_ok(int w, int h)
 {
-	return (w == 640 && h == 480) || (w == 800 && h == 600) || (w == 1024 && h == 768);
+	return glide_res(w, h) >= 0;
 }
 
 static int g2_open(int w, int h)
@@ -96,7 +110,7 @@ static int g2_open(int w, int h)
 		g2.grSstSelect(0);
 		inited = 1;
 	}
-	int res = w == 1024 ? GR_RESOLUTION_1024x768 : w == 800 ? GR_RESOLUTION_800x600 : GR_RESOLUTION_640x480;
+	int res = glide_res(w, h);
 	if (!g2.grSstWinOpen(g2.hwnd, res, GR_REFRESH_60Hz, GR_COLORFORMAT_ARGB, GR_ORIGIN_UPPER_LEFT, 2, 1))
 		return -1;
 	opened = 1;
@@ -228,8 +242,15 @@ static int g2_read(void)
 {
 	uint16_t px;
 	g2.grLfbReadRegion(GR_BUFFER_BACKBUFFER, 0, 0, 1, 1, 2, &px);
-	return g2.grLfbReadRegion(GR_BUFFER_BACKBUFFER, 0, 0, (uint32_t)space_view.w, (uint32_t)space_view.h,
-				  (uint32_t)space_view.w * 2, lfb) != 0;
+	/* in strips of at most 256 KB: the wrapper returns the pixels through its shared data area,
+	 * which holds about 2.7 MB (a whole 1600x1200 frame would overrun it) */
+	int w = space_view.w, rows = 131072 / w;
+	for (int y = 0; y < space_view.h; y += rows) {
+		int n = space_view.h - y < rows ? space_view.h - y : rows;
+		if (!g2.grLfbReadRegion(GR_BUFFER_BACKBUFFER, 0, (uint32_t)y, (uint32_t)w, (uint32_t)n, (uint32_t)w * 2, lfb + y * w))
+			return 0;
+	}
+	return 1;
 }
 
 static void g2_pixel(int x, int y, uint8_t rgb[3])
