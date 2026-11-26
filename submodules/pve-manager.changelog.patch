@@ -1,8 +1,15 @@
 diff --git a/debian/changelog b/debian/changelog
-index d578b516..0cf341b0 100644
+index d578b516..d0ec2067 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,23 @@
+@@ -1,10 +1,30 @@
++pve-manager (9.2.41+wsh3) trixie; urgency=medium
++
++  * feat(pve-qemu): SS-600MP PROM reaches ok by itself and installs
++    SunOS 4.1.2 (#560)
++
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 26 Nov 2026 21:58:11 +0000
++
 +pve-manager (9.2.41+wsh2) trixie; urgency=medium
 +
 +  * fix(sparc): boot Solaris on SS-10/SS-20 with up to 2048 MB (#532)
