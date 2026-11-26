@@ -524,6 +524,42 @@ clean-qemu-3dfx:
 		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/e2e/3dfx/space/build-linux.sh /out $$lib"; \
 	ls -la build/wshspace/*
 
+# wshracer (e2e/3dfx/racer), the procedural <= 96 KB 3dfx anti-gravity hover-racer,
+# built for the same three targets as wshdemo into build/wshracer/{windows,dos,linux}.
+.PHONY: 3dfx-racer
+3dfx-racer:
+	set -e; \
+	git submodule update --init submodules/qemu-3dfx; \
+	rm -rf build/wshracer && mkdir -p build/wshracer/windows build/wshracer/dos build/wshracer/linux; \
+	lib=""; [ ! -e build/linux-glide/libglide2x.so ] || lib=/src/build/linux-glide; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshracer/windows:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc-mingw-w64-i686 binutils-mingw-w64-i686 > /dev/null && sh /src/e2e/3dfx/racer/build-win.sh /out"; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshracer/dos:/out \
+		$(DJGPP_BUILD_IMAGE) sh /src/e2e/3dfx/racer/build-dos.sh /out; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshracer/linux:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/e2e/3dfx/racer/build-linux.sh /out $$lib"; \
+	ls -la build/wshracer/*
+
+# wshkeep (e2e/3dfx/keep), the procedural <= 96 KB 3dfx subterranean citadel & dungeon crawler,
+# built for the same three targets as wshdemo into build/wshkeep/{windows,dos,linux}.
+.PHONY: 3dfx-keep
+3dfx-keep:
+	set -e; \
+	git submodule update --init submodules/qemu-3dfx; \
+	rm -rf build/wshkeep && mkdir -p build/wshkeep/windows build/wshkeep/dos build/wshkeep/linux; \
+	lib=""; [ ! -e build/linux-glide/libglide2x.so ] || lib=/src/build/linux-glide; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshkeep/windows:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc-mingw-w64-i686 binutils-mingw-w64-i686 > /dev/null && sh /src/e2e/3dfx/keep/build-win.sh /out"; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshkeep/dos:/out \
+		$(DJGPP_BUILD_IMAGE) sh /src/e2e/3dfx/keep/build-dos.sh /out; \
+	$(DOCKER) run $(DOCKER_ARG) --rm -v $(CURRENT_DIR):/src:ro -v $(CURRENT_DIR)/build/wshkeep/linux:/out \
+		debian:$(DEBIAN_TAG) \
+		sh -c "apt-get update -qq && apt-get install --no-install-recommends --assume-yes -qq gcc gcc-multilib binutils > /dev/null && bash /src/e2e/3dfx/keep/build-linux.sh /out $$lib"; \
+	ls -la build/wshkeep/*
+
 # The optional wsh-lab package (packages/wsh-lab): the sparc lab, Architecture: all, built from this
 # checkout in a plain Debian 13 image, into build/wsh-lab/; lintian runs at the end of the build. Its
 # version comes from git (packages/wsh-lab/version.sh), so it needs the full history and no changelog.
@@ -632,6 +668,8 @@ help:
 	@echo "  3dfx-drivers:            Build 3dfx DOS drivers"
 	@echo "  3dfx-demo:               Build wshdemo (Windows, DOS and Linux) into build/wshdemo"
 	@echo "  3dfx-space:              Build wshspace (Windows, DOS and Linux) into build/wshspace"
+	@echo "  3dfx-racer:              Build wshracer (Windows, DOS and Linux) into build/wshracer"
+	@echo "  3dfx-keep:               Build wshkeep (Windows, DOS and Linux) into build/wshkeep"
 	@echo "  clean-qemu-3dfx:         Clean 3dfx-specific QEMU files"
 	@echo "  prepare-qemu-3dfx:       Initialize 3dfx submodule"
 	@echo "  restore-pve-qemu:        Restore pve-qemu to current head"
