@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..473461c 100644
+index bc240a0..6fd5d64 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,135 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,138 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -209,6 +209,9 @@ index bc240a0..473461c 100644
 +wsh/0178-tests-qtest-test-the-SS-600MP-ESP-s-configuration-re.patch
 +wsh/0179-hw-dma-sparc32_dma-let-the-SS-600MP-s-ESC-take-only-.patch
 +wsh/0180-tests-qtest-test-byte-only-access-to-the-SS-600MP-s-.patch
++wsh/0181-hw-sparc-sun4m-let-the-SS-600MP-IOMMU-s-enable-bit-t.patch
++wsh/0182-hw-scsi-esp-send-data-by-DMA-in-the-SS-600MP-ESP-s-t.patch
++wsh/0183-tests-qtest-test-the-SS-600MP-ESP-s-DMA-read-in-targ.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -27222,6 +27225,613 @@ index 0000000..3e7825c
 +     qtest_add_func("sun4m-ss600mp/dma-size-error", test_dma_size_error);
 +     qtest_add_func("sun4m-ss600mp/esp-cfg2", test_esp_cfg2);
 ++    qtest_add_func("sun4m-ss600mp/esp-size-error", test_esp_size_error);
++     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
++ 
++     return g_test_run();
+diff --git a/debian/patches/wsh/0181-hw-sparc-sun4m-let-the-SS-600MP-IOMMU-s-enable-bit-t.patch b/debian/patches/wsh/0181-hw-sparc-sun4m-let-the-SS-600MP-IOMMU-s-enable-bit-t.patch
+new file mode 100644
+index 0000000..129fddc
+--- /dev/null
++++ b/debian/patches/wsh/0181-hw-sparc-sun4m-let-the-SS-600MP-IOMMU-s-enable-bit-t.patch
+@@ -0,0 +1,134 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: let the SS-600MP IOMMU's enable bit turn
++ translation off
++
++The SS-600MP boot PROM's ESP DMA read test (progress 0xe5) writes 0 to
++the IOMMU's control register, turning it off, and gives the ESC the
++physical address of bytes it wrote to memory through ASI 0x20. QEMU's
++IOMMU translates every DVMA address through its page table whatever the
++enable bit says, so the ESC read whatever the stale table pointed at.
++
++New sun4m-iommu property enable-bit (default off) and hwdef field
++iommu_enable_bit, set on the SS-600MP only: with the control register's
++enable bit clear, DVMA addresses go to memory untranslated. The other
++machines translate as before; their firmware and OSes turn the IOMMU on
++before any DVMA, as OpenBIOS and SunOS do on the 600MP. Trace event
++sun4m_iommu_bypass; no new state.
++---
++ hw/sparc/sun4m.c               | 15 +++++++++++++--
++ hw/sparc/sun4m_iommu.c         | 11 +++++++++++
++ hw/sparc/trace-events          |  1 +
++ include/hw/sparc/sun4m_iommu.h |  5 +++++
++ 4 files changed, 30 insertions(+), 2 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 8ddf8ce0..f0d46e1f 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -116,6 +116,7 @@ struct sun4m_hwdef {
++     uint32_t iommu_base_mask;   /* if set: the bits the base register keeps */
++     uint32_t iommu_sbcfg_mask;  /* if set: the bits the slot registers keep */
++     uint32_t iommu_tlb_data_mask; /* if set: the bits its TLB data keeps */
+++    bool iommu_enable_bit;      /* the IOMMU's enable bit turns it off */
++     uint32_t le_rap_mask;       /* if set: the bits the lance's RAP keeps */
++     bool le_am7990;             /* the lance receives as the Am7990 */
++     uint16_t machine_id;
++@@ -309,7 +310,7 @@ static unsigned long sun4m_load_kernel(const char *kernel_filename,
++ 
++ static void *iommu_init(hwaddr addr, uint32_t version, uint32_t base_mask,
++                         uint32_t sbcfg_mask, uint32_t tlb_data_mask,
++-                        qemu_irq irq)
+++                        bool enable_bit, qemu_irq irq)
++ {
++     DeviceState *dev;
++     SysBusDevice *s;
++@@ -325,6 +326,9 @@ static void *iommu_init(hwaddr addr, uint32_t version, uint32_t base_mask,
++     if (tlb_data_mask) {
++         qdev_prop_set_uint32(dev, "tlb-data-mask", tlb_data_mask);
++     }
+++    if (enable_bit) {
+++        qdev_prop_set_bit(dev, "enable-bit", true);
+++    }
++     s = SYS_BUS_DEVICE(dev);
++     sysbus_realize_and_unref(s, &error_fatal);
++     sysbus_connect_irq(s, 0, irq);
++@@ -1262,7 +1266,7 @@ static void sun4m_hw_init(MachineState *machine)
++ 
++     iommu = iommu_init(hwdef->iommu_base, hwdef->iommu_version,
++                        hwdef->iommu_base_mask, hwdef->iommu_sbcfg_mask,
++-                       hwdef->iommu_tlb_data_mask,
+++                       hwdef->iommu_tlb_data_mask, hwdef->iommu_enable_bit,
++                        slavio_irq[30]);
++     if (hwdef->sbus_bus_errors) {
++         for (i = 0; i < smp_cpus; i++) {
++@@ -1743,6 +1747,13 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++         .iommu_base_mask = 0xfffffc00,
++         .iommu_sbcfg_mask = 0x0003800f,
++         .iommu_tlb_data_mask = 0xffffff86,
+++        /*
+++         * Its boot PROM's ESP DMA read test turns the IOMMU off and gives
+++         * the ESC physical addresses. The other machines translate
+++         * whatever the enable bit says (their firmware and OSes turn the
+++         * IOMMU on before any DVMA).
+++         */
+++        .iommu_enable_bit = true,
++         /*
++          * Its lance's register address port keeps bits 1-0, as on the
++          * Am7990 (CSR0-CSR3): the boot PROM writes a walking one to it and
++diff --git a/hw/sparc/sun4m_iommu.c b/hw/sparc/sun4m_iommu.c
++index 09566953..b6e90ca0 100644
++--- a/hw/sparc/sun4m_iommu.c
+++++ b/hw/sparc/sun4m_iommu.c
++@@ -358,6 +358,15 @@ static IOMMUTLBEntry sun4m_translate_iommu(IOMMUMemoryRegion *iommu,
++     };
++ 
++     page = addr & IOMMU_PAGE_MASK;
+++    if (is->enable_bit && !(is->regs[IOMMU_CTRL] & IOMMU_CTRL_ENAB)) {
+++        /* Turned off: DVMA addresses are physical addresses */
+++        trace_sun4m_iommu_bypass(addr);
+++        ret.iova = page;
+++        ret.translated_addr = page;
+++        ret.addr_mask = ~IOMMU_PAGE_MASK;
+++        ret.perm = IOMMU_RW;
+++        return ret;
+++    }
++     pte = iommu_page_get_flags(is, page);
++     if (!(pte & IOPTE_VALID)) {
++         iommu_bad_addr(is, page, is_write);
++@@ -431,6 +440,8 @@ static const Property iommu_properties[] = {
++     DEFINE_PROP_UINT32("sbcfg-mask", IOMMUState, sbcfg_mask,
++                        IOMMU_SBCFG_MASK),
++     DEFINE_PROP_UINT32("tlb-data-mask", IOMMUState, tlb_data_mask, 0xffffffff),
+++    /* the control register's enable bit turns translation on and off */
+++    DEFINE_PROP_BOOL("enable-bit", IOMMUState, enable_bit, false),
++ };
++ 
++ static void iommu_class_init(ObjectClass *klass, const void *data)
++diff --git a/hw/sparc/trace-events b/hw/sparc/trace-events
++index 4ccc1cd2..abc1cf3d 100644
++--- a/hw/sparc/trace-events
+++++ b/hw/sparc/trace-events
++@@ -19,6 +19,7 @@ sun4m_iommu_mem_writel_pgflush(uint32_t val) "page flush 0x%x"
++ sun4m_iommu_page_get_flags(uint64_t pa, uint64_t iopte, uint32_t ret) "get flags addr 0x%"PRIx64" => pte 0x%"PRIx64", *pte = 0x%x"
++ sun4m_iommu_translate_pa(uint64_t addr, uint64_t pa, uint32_t iopte) "xlate dva 0x%"PRIx64" => pa 0x%"PRIx64" iopte = 0x%x"
++ sun4m_iommu_bad_addr(uint64_t addr) "bad addr 0x%"PRIx64
+++sun4m_iommu_bypass(uint64_t addr) "untranslated DVMA 0x%"PRIx64
++ sun4m_iommu_cpu_write_error(uint64_t addr, unsigned size, uint32_t afsr) "cpu write error at 0x%"PRIx64" size %u, afsr 0x%x"
++ 
++ # leon3.c
++diff --git a/include/hw/sparc/sun4m_iommu.h b/include/hw/sparc/sun4m_iommu.h
++index ccc5b58e..4601e0f3 100644
++--- a/include/hw/sparc/sun4m_iommu.h
+++++ b/include/hw/sparc/sun4m_iommu.h
++@@ -44,6 +44,11 @@ struct IOMMUState {
++     uint32_t base_mask;     /* the bits the page table base register keeps */
++     uint32_t sbcfg_mask;    /* the bits the SBus slot configuration keeps */
++     uint32_t tlb_data_mask; /* the bits the TLB data entries keep */
+++    /*
+++     * Honour the control register's enable bit: with it clear, DVMA
+++     * addresses go to memory untranslated.
+++     */
+++    bool enable_bit;
++ };
++ typedef struct IOMMUState IOMMUState;
++ 
+diff --git a/debian/patches/wsh/0182-hw-scsi-esp-send-data-by-DMA-in-the-SS-600MP-ESP-s-t.patch b/debian/patches/wsh/0182-hw-scsi-esp-send-data-by-DMA-in-the-SS-600MP-ESP-s-t.patch
+new file mode 100644
+index 0000000..8af326f
+--- /dev/null
++++ b/debian/patches/wsh/0182-hw-scsi-esp-send-data-by-DMA-in-the-SS-600MP-ESP-s-t.patch
+@@ -0,0 +1,281 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/scsi/esp: send data by DMA in the SS-600MP ESP's target
++ test mode
++
++The SS-600MP boot PROM's ESP DMA read test (progress 0xe5) resets the
++ESC, sets chip test mode in configuration register 1 (bit 3) and forces
++target mode in the test register (bit 0), loads the transfer count and
++the ESC's byte count and address, and gives the ESP the target command
++Send Data with DMA (0xa2). It then waits for the ESC's control register
++to show the transfer count zero bit and DMA enable (DMAESC_TCZERO and
++DMAGA_ENDVMA in SunOS's dmaga.h) and reads the bytes back from the
++FIFO: one fewer than it gave, starting with the second (the first
++presumably waits on the SCSI bus for an ACK no initiator gives). It
++does that for counts 1-16 at addresses 0-0x42. QEMU's ESP has no target
++mode and answered with an illegal command interrupt, and the ESC had no
++such bit.
++
++New sysbus-esp property target-test (default off): with it, in chip
++test mode with target mode forced, Send Data with DMA reads the
++transfer count's bytes by DMA (as far as the FIFO takes them), puts the
++first on the bus and the rest in the FIFO, and counts the transfer
++count down; no interrupt. Nothing else of target mode is modelled; any
++other target command stays illegal. The sparc32 DMA device sets it on
++its ESP with the esc property (the SS-600MP only).
++
++With the esc property the ESC's byte count now counts down as its SCSI
++DMA moves data, and TCZERO (bit 12) is set when it reaches zero; a write
++of the count or a reset clears it. It sits in the control register's
++read-only bits, so no new state. SunOS's esp driver writes the count
++before each transfer and never reads it or TCZERO.
++
++Trace events esp_target_test_send_data and sparc32_dma_esc_transfer.
++
++With this and the previous patch the PROM passes its ESP DMA read test,
++the rest of its power-on self test passes or is skipped, and it reaches
++its ok prompt.
++---
++ hw/dma/sparc32_dma.c  | 37 +++++++++++++++++++++++++++-
++ hw/dma/trace-events   |  1 +
++ hw/scsi/esp.c         | 57 +++++++++++++++++++++++++++++++++++++++++++
++ hw/scsi/trace-events  |  1 +
++ include/hw/scsi/esp.h |  7 ++++++
++ 5 files changed, 102 insertions(+), 1 deletion(-)
++
++diff --git a/hw/dma/sparc32_dma.c b/hw/dma/sparc32_dma.c
++index cfe186b0..116dd438 100644
++--- a/hw/dma/sparc32_dma.c
+++++ b/hw/dma/sparc32_dma.c
++@@ -86,6 +86,13 @@
++ #define ESC_CSR_WMASK 0x00042b90
++ #define ESC_COUNT_MASK 0x00ffffff
++ 
+++/*
+++ * As the ESC's SCSI DMA moves data its byte count counts down, and the
+++ * transfer count zero bit (DMAESC_TCZERO in dmaga.h) is set when it
+++ * reaches zero; a write of the count or a reset clears the bit.
+++ */
+++#define ESC_TCZERO 0x00001000
+++
++ enum {
++     GPIO_RESET = 0,
++     GPIO_DMA,
++@@ -186,6 +193,17 @@ static void dma_set_irq(void *opaque, int irq, int level)
++     }
++ }
++ 
+++static void esc_transfer_done(DMADeviceState *s, int len)
+++{
+++    if (s->dmaregs[2]) {
+++        s->dmaregs[2] = len < s->dmaregs[2] ? s->dmaregs[2] - len : 0;
+++        if (!s->dmaregs[2]) {
+++            s->dmaregs[0] |= ESC_TCZERO;
+++        }
+++    }
+++    trace_sparc32_dma_esc_transfer(s->dmaregs[1], len, s->dmaregs[2]);
+++}
+++
++ void espdma_memory_read(void *opaque, uint8_t *buf, int len)
++ {
++     DMADeviceState *s = opaque;
++@@ -194,6 +212,9 @@ void espdma_memory_read(void *opaque, uint8_t *buf, int len)
++     trace_espdma_memory_read(s->dmaregs[1], len);
++     dma_memory_read(&is->iommu_as, s->dmaregs[1], buf, len,
++                     MEMTXATTRS_UNSPECIFIED);
+++    if (s->esc) {
+++        esc_transfer_done(s, len);
+++    }
++     s->dmaregs[1] += len;
++ }
++ 
++@@ -205,6 +226,9 @@ void espdma_memory_write(void *opaque, uint8_t *buf, int len)
++     trace_espdma_memory_write(s->dmaregs[1], len);
++     dma_memory_write(&is->iommu_as, s->dmaregs[1], buf, len,
++                      MEMTXATTRS_UNSPECIFIED);
+++    if (s->esc) {
+++        esc_transfer_done(s, len);
+++    }
++     s->dmaregs[1] += len;
++ }
++ 
++@@ -257,6 +281,9 @@ static void dma_mem_write(void *opaque, hwaddr addr,
++         }
++ 
++         if (s->esc) {
+++            if (val & DMA_RESET) {
+++                s->dmaregs[0] &= ~ESC_TCZERO;
+++            }
++             val &= ESC_CSR_WMASK;
++             val |= ESC_VER;
++             s->dmaregs[0] = (s->dmaregs[0] & ~ESC_CSR_WMASK) | val;
++@@ -273,7 +300,11 @@ static void dma_mem_write(void *opaque, hwaddr addr,
++         s->dmaregs[saddr] = val;
++         break;
++     case 2:
++-        s->dmaregs[saddr] = s->esc ? val & ESC_COUNT_MASK : val;
+++        if (s->esc) {
+++            s->dmaregs[0] &= ~ESC_TCZERO;
+++            val &= ESC_COUNT_MASK;
+++        }
+++        s->dmaregs[saddr] = val;
++         break;
++     default:
++         s->dmaregs[saddr] = val;
++@@ -476,6 +507,10 @@ static void sparc32_espdma_device_realize(DeviceState *dev, Error **errp)
++     esp->dma_opaque = SPARC32_DMA_DEVICE(dev);
++     sysbus->it_shift = 2;
++     esp->dma_enabled = 1;
+++    if (s->esc) {
+++        /* the boot PROM tests the DMA with the ESP in target test mode */
+++        qdev_prop_set_bit(DEVICE(sysbus), "target-test", true);
+++    }
++     sysbus_realize(SYS_BUS_DEVICE(sysbus), &error_fatal);
++ 
++     if (s->esc) {
++diff --git a/hw/dma/trace-events b/hw/dma/trace-events
++index 0f8c1598..ec9eaf52 100644
++--- a/hw/dma/trace-events
+++++ b/hw/dma/trace-events
++@@ -19,6 +19,7 @@ sparc32_dma_enable_raise(void) "Raise DMA enable"
++ sparc32_dma_enable_lower(void) "Lower DMA enable"
++ sparc32_dma_esc_esp_size_error(uint64_t addr, unsigned size) "ESC slave size error at ESP register 0x%"PRIx64" size %u"
++ sparc32_dma_esc_size_error(uint64_t addr, unsigned size) "ESC slave size error at 0x%"PRIx64" size %u"
+++sparc32_dma_esc_transfer(uint32_t addr, int len, uint32_t count) "ESC DMA at 0x%08x len %d, byte count left %u"
++ 
++ # i8257.c
++ i8257_unregistered_dma(int nchan, int dma_pos, int dma_len) "unregistered DMA channel used nchan=%d dma_pos=%d dma_len=%d"
++diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
++index cbfb41e0..7be17b07 100644
++--- a/hw/scsi/esp.c
+++++ b/hw/scsi/esp.c
++@@ -1209,6 +1209,53 @@ static bool esp_cmd_is_valid(ESPState *s, uint8_t cmd)
++     return false;
++ }
++ 
+++/*
+++ * Chip test mode (configuration register 1 bit 3) with target mode forced
+++ * in the test register (bit 0), as the SS-600MP boot PROM uses it to test
+++ * the ESP's DMA without a SCSI bus: the target command Send Data with DMA
+++ * moves data from DMA into the FIFO, and no initiator answers. Nothing
+++ * else of target mode is modelled.
+++ */
+++static bool esp_target_test(ESPState *s)
+++{
+++    return s->target_test && (s->rregs[ESP_CFG1] & CFG1_CHTEST) &&
+++           (s->wregs[ESP_WTEST] & TEST_TARGET);
+++}
+++
+++/*
+++ * Send Data: DMA fills the FIFO. The first byte goes on to the SCSI data
+++ * bus and waits there for an ACK that never comes, so the FIFO holds the
+++ * bytes after it; the DMA stops when the FIFO is full.
+++ */
+++static void esp_target_send_data(ESPState *s)
+++{
+++    uint8_t buf[ESP_FIFO_SZ + 1];
+++    uint32_t len;
+++
+++    if (!s->dma_enabled) {
+++        s->dma_cb = esp_target_send_data;
+++        return;
+++    }
+++    len = MIN(esp_get_tc(s), fifo8_num_free(&s->fifo) + 1);
+++    trace_esp_target_test_send_data(esp_get_tc(s), len);
+++    if (len) {
+++        s->dma_memory_read(s->dma_opaque, buf, len);
+++        esp_fifo_push_buf(s, buf + 1, len - 1);
+++        esp_set_tc(s, esp_get_tc(s) - len);
+++    }
+++}
+++
+++static bool esp_run_target_test_cmd(ESPState *s, uint8_t cmd)
+++{
+++    if (cmd != (CMD_DMA | CMD_SNDDATA)) {
+++        return false;
+++    }
+++    s->dma = 1;
+++    esp_set_tc(s, esp_get_stc(s) ? esp_get_stc(s) : 0x10000);
+++    esp_target_send_data(s);
+++    return true;
+++}
+++
++ static void esp_run_cmd(ESPState *s)
++ {
++     uint8_t cmd = s->rregs[ESP_CMD];
++@@ -1365,6 +1412,9 @@ void esp_reg_write(ESPState *s, uint32_t saddr, uint64_t val)
++         break;
++     case ESP_CMD:
++         s->rregs[saddr] = val;
+++        if (esp_target_test(s) && esp_run_target_test_cmd(s, val)) {
+++            break;
+++        }
++         if (!esp_cmd_is_valid(s, s->rregs[saddr])) {
++             s->rregs[ESP_RSTAT] |= INTR_IL;
++             esp_raise_irq(s);
++@@ -1683,6 +1733,7 @@ static void sysbus_esp_realize(DeviceState *dev, Error **errp)
++     assert(sysbus->it_shift != -1);
++     s->irq_latency_ns = (int64_t)sysbus->irq_latency_us * SCALE_US;
++     s->cfg2_mask = sysbus->cfg2_mask;
+++    s->target_test = sysbus->target_test;
++ 
++     s->chip_id = TCHI_FAS100A;
++     memory_region_init_io(&sysbus->iomem, OBJECT(sysbus), &sysbus_esp_mem_ops,
++@@ -1720,6 +1771,12 @@ static const Property sysbus_esp_properties[] = {
++      * keep bit 5 (0xdf), which its boot PROM checks; the others keep all.
++      */
++     DEFINE_PROP_UINT8("cfg2-mask", SysBusESPState, cfg2_mask, 0xff),
+++    /*
+++     * Send Data and Receive Data with DMA in chip test mode with target
+++     * mode forced, as the SS-600MP's boot PROM tests its ESP DMA; off,
+++     * those commands are illegal as before.
+++     */
+++    DEFINE_PROP_BOOL("target-test", SysBusESPState, target_test, false),
++ };
++ 
++ static const VMStateDescription vmstate_sysbus_esp_scsi = {
++diff --git a/hw/scsi/trace-events b/hw/scsi/trace-events
++index b7203018..e67b6170 100644
++--- a/hw/scsi/trace-events
+++++ b/hw/scsi/trace-events
++@@ -200,6 +200,7 @@ esp_mem_writeb_cmd_dissel(uint32_t val) "Disable selection (0x%2.2x)"
++ esp_mem_writeb_cmd_ti(uint32_t val) "Transfer Information (0x%2.2x)"
++ esp_set_phase(const char *phase) "setting bus phase to %s"
++ esp_invalid_cmd(uint8_t cmd, uint8_t asc_mode) "command 0x%x asc_mode 0x%x"
+++esp_target_test_send_data(uint32_t tc, uint32_t len) "target test Send Data: transfer count %u, %u bytes by DMA"
++ 
++ # esp-pci.c
++ esp_pci_error_invalid_dma_direction(void) "invalid DMA transfer direction"
++diff --git a/include/hw/scsi/esp.h b/include/hw/scsi/esp.h
++index 45e74233..71eabbb6 100644
++--- a/include/hw/scsi/esp.h
+++++ b/include/hw/scsi/esp.h
++@@ -37,6 +37,7 @@ struct ESPState {
++     bool drq_state;
++     uint8_t chip_id;
++     uint8_t cfg2_mask;      /* the bits configuration register 2 keeps */
+++    bool target_test;       /* target data commands in chip test mode */
++     bool tchi_written;
++     int32_t ti_size;
++     uint32_t status;
++@@ -89,6 +90,7 @@ struct SysBusESPState {
++     uint32_t it_shift;
++     uint32_t irq_latency_us;
++     uint8_t cfg2_mask;
+++    bool target_test;
++     ESPState esp;
++ };
++ 
++@@ -166,8 +168,13 @@ struct SysBusESPState {
++ #define SEQ_MO 0x1
++ #define SEQ_CD 0x4
++ 
+++#define CMD_SNDDATA 0x22
+++
+++#define CFG1_CHTEST 0x08
++ #define CFG1_RESREPT 0x40
++ 
+++#define TEST_TARGET 0x01
+++
++ #define TCHI_FAS100A 0x4
++ #define TCHI_AM53C974 0x12
++ 
+diff --git a/debian/patches/wsh/0183-tests-qtest-test-the-SS-600MP-ESP-s-DMA-read-in-targ.patch b/debian/patches/wsh/0183-tests-qtest-test-the-SS-600MP-ESP-s-DMA-read-in-targ.patch
+new file mode 100644
+index 0000000..339ac1e
+--- /dev/null
++++ b/debian/patches/wsh/0183-tests-qtest-test-the-SS-600MP-ESP-s-DMA-read-in-targ.patch
+@@ -0,0 +1,174 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP ESP's DMA read in target test
++ mode
++
++sun4m-ss600mp-test case esp-dma-read for the previous two patches, as
++the boot PROM runs it: bytes 1-32 in physical memory at an odd address,
++the IOMMU turned off, the ESC reset, the ESP in chip test mode with
++target mode forced and Send Data with DMA for counts 1-16. The ESC's
++control register reads ID 4, TCZERO and DMA enable, its count 0 and its
++address moved on; the ESP shows the transfer count zero bit and no
++interrupt, and its FIFO holds bytes 2 to n. A write of the count and a
++reset clear TCZERO; without chip test mode the command is illegal as
++before. On the SS-10 the ESP takes the command as illegal and nothing
++moves. Fails without the previous two patches.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 124 +++++++++++++++++++++++++++++++
++ 1 file changed, 124 insertions(+)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index 31225e52..88fee435 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -45,6 +45,13 @@
++  * size error bit, as for its own registers. The SS-10 maps the ESP
++  * directly.
++  *
+++ * The boot PROM's ESP DMA read test puts the ESP in chip test mode with
+++ * target mode forced and gives it Send Data with DMA, with the IOMMU
+++ * turned off: the ESC reads the bytes from physical memory, counts its
+++ * byte count down to zero and sets its transfer count zero bit; the ESP
+++ * puts the first byte on the bus and keeps the rest in its FIFO. The
+++ * SS-10's ESP takes the command as illegal.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -77,6 +84,22 @@
++ #define ESP_CFG2        0xb
++ #define ESP_CFG3        0xc
++ #define ESP_CFG2_MASK   0xdf
+++#define ESP_TCLO        0x0
+++#define ESP_TCMID       0x1
+++#define ESP_FIFO        0x2
+++#define ESP_CMD         0x3
+++#define ESP_STAT        0x4
+++#define ESP_FLAGS       0x7
+++#define ESP_TEST        0xa
+++#define ESP_CFG1_CHTEST 0x08
+++#define ESP_TEST_TARGET 0x01
+++#define ESP_SNDDATA_DMA 0xa2
+++#define ESP_STAT_TC     0x10
+++#define ESP_STAT_INT    0x80
+++#define ESC_RESET       0x00000080
+++#define ESC_ENDVMA      0x00000200
+++#define ESC_TCZERO      0x00001000
+++#define IOMMU_CTRL      0xfe0000000ULL
++ /* the system interrupt pending register of the slavio interrupt controller */
++ #define INTCTL_PENDING  0xff1410000ULL
++ #define IRQ_LE          (1u << 16)
++@@ -510,6 +533,106 @@ static void test_esp_size_error(void)
++     qtest_quit(qts);
++ }
++ 
+++static void esp_writeb(QTestState *qts, uint64_t base, int reg, uint8_t val)
+++{
+++    qtest_writeb(qts, base + reg * 4, val);
+++}
+++
+++static uint8_t esp_readb(QTestState *qts, uint64_t base, int reg)
+++{
+++    return qtest_readb(qts, base + reg * 4);
+++}
+++
+++static void test_esp_dma_read(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    const uint32_t mem = 0x1003;        /* the PROM uses odd addresses too */
+++    uint32_t n, i;
+++
+++    for (n = 1; n <= 16; n++) {
+++        /* as the PROM does it: bytes 1, 2, ... in physical memory */
+++        for (i = 0; i < 32; i++) {
+++            qtest_writeb(qts, mem + i, i + 1);
+++        }
+++        qtest_writel(qts, IOMMU_CTRL, 0);
+++        qtest_writel(qts, DMA_CSR, ESC_RESET);
+++        qtest_writel(qts, DMA_CSR, 0);
+++        esp_writeb(qts, ESP_REGS, ESP_CMD, 0);
+++        esp_writeb(qts, ESP_REGS, ESP_CFG1, ESP_CFG1_CHTEST);
+++        esp_writeb(qts, ESP_REGS, ESP_TEST, ESP_TEST_TARGET);
+++        esp_writeb(qts, ESP_REGS, ESP_TCLO, n);
+++        esp_writeb(qts, ESP_REGS, ESP_TCMID, 0);
+++        qtest_writel(qts, DMA_COUNT, n);
+++        qtest_writel(qts, DMA_ADDR, mem);
+++        g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID);
+++        esp_writeb(qts, ESP_REGS, ESP_CMD, ESP_SNDDATA_DMA);
+++        qtest_writel(qts, DMA_CSR, ESC_ENDVMA);
+++
+++        /* the ESC's count ran out; the ESP's too, with no interrupt */
+++        g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==,
+++                        ESC_ID | ESC_TCZERO | ESC_ENDVMA);
+++        g_assert_cmphex(qtest_readl(qts, DMA_COUNT), ==, 0);
+++        g_assert_cmphex(qtest_readl(qts, DMA_ADDR), ==, mem + n);
+++        g_assert_cmphex(esp_readb(qts, ESP_REGS, ESP_STAT) &
+++                        (ESP_STAT_TC | ESP_STAT_INT), ==, ESP_STAT_TC);
+++        /* the first byte is on the bus, the FIFO has the others */
+++        g_assert_cmpuint(esp_readb(qts, ESP_REGS, ESP_FLAGS) & 0x1f, ==, n - 1);
+++        for (i = 2; i <= n; i++) {
+++            g_assert_cmphex(esp_readb(qts, ESP_REGS, ESP_FIFO), ==, i);
+++        }
+++        /* a write of the count clears the bit */
+++        qtest_writel(qts, DMA_COUNT, 1);
+++        g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | ESC_ENDVMA);
+++    }
+++    /* so does a reset; and the FIFO is empty again */
+++    qtest_writel(qts, DMA_COUNT, 0);
+++    qtest_writel(qts, DMA_CSR, ESC_ENDVMA);
+++    esp_writeb(qts, ESP_REGS, ESP_CFG1, ESP_CFG1_CHTEST);
+++    esp_writeb(qts, ESP_REGS, ESP_TEST, ESP_TEST_TARGET);
+++    esp_writeb(qts, ESP_REGS, ESP_TCLO, 4);
+++    qtest_writel(qts, DMA_COUNT, 4);
+++    qtest_writel(qts, DMA_ADDR, mem);
+++    esp_writeb(qts, ESP_REGS, ESP_CMD, ESP_SNDDATA_DMA);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR) & ESC_TCZERO, ==, ESC_TCZERO);
+++    qtest_writel(qts, DMA_CSR, ESC_RESET);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR) & ESC_TCZERO, ==, 0);
+++    g_assert_cmpuint(esp_readb(qts, ESP_REGS, ESP_FLAGS) & 0x1f, ==, 0);
+++    /* without chip test mode the command is illegal, as before */
+++    qtest_writel(qts, DMA_CSR, 0);
+++    esp_writeb(qts, ESP_REGS, ESP_TEST, ESP_TEST_TARGET);
+++    esp_writeb(qts, ESP_REGS, ESP_TCLO, 4);
+++    qtest_writel(qts, DMA_COUNT, 4);
+++    qtest_writel(qts, DMA_CSR, ESC_ENDVMA);
+++    esp_writeb(qts, ESP_REGS, ESP_CMD, ESP_SNDDATA_DMA);
+++    g_assert_cmphex(esp_readb(qts, ESP_REGS, ESP_STAT) & ESP_STAT_INT, ==,
+++                    ESP_STAT_INT);
+++    g_assert_cmpuint(qtest_readl(qts, DMA_COUNT), ==, 4);
+++    g_assert_cmpuint(esp_readb(qts, ESP_REGS, ESP_FLAGS) & 0x1f, ==, 0);
+++    qtest_quit(qts);
+++
+++    /* the SS-10's ESP takes it as an illegal command and moves nothing */
+++    qts = qtest_init("-machine SS-10 -m 64");
+++    for (i = 0; i < 32; i++) {
+++        qtest_writeb(qts, mem + i, i + 1);
+++    }
+++    qtest_writel(qts, SS10_DMA_CSR, ESC_RESET);
+++    qtest_writel(qts, SS10_DMA_CSR, 0);
+++    esp_writeb(qts, SS10_ESP_REGS, ESP_CFG1, ESP_CFG1_CHTEST);
+++    esp_writeb(qts, SS10_ESP_REGS, ESP_TEST, ESP_TEST_TARGET);
+++    esp_writeb(qts, SS10_ESP_REGS, ESP_TCLO, 4);
+++    qtest_writel(qts, SS10_DMA_COUNT, 4);
+++    qtest_writel(qts, SS10_DMA_ADDR, mem);
+++    esp_writeb(qts, SS10_ESP_REGS, ESP_CMD, ESP_SNDDATA_DMA);
+++    qtest_writel(qts, SS10_DMA_CSR, ESC_ENDVMA);
+++    g_assert_cmphex(esp_readb(qts, SS10_ESP_REGS, ESP_STAT) & ESP_STAT_INT, ==,
+++                    ESP_STAT_INT);
+++    g_assert_cmpuint(esp_readb(qts, SS10_ESP_REGS, ESP_FLAGS) & 0x1f, ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, SS10_DMA_CSR) & ESC_TCZERO, ==, 0);
+++    g_assert_cmphex(qtest_readl(qts, SS10_DMA_COUNT), ==, 4);
+++    g_assert_cmphex(qtest_readl(qts, SS10_DMA_ADDR), ==, mem);
+++    qtest_quit(qts);
+++}
+++
++ static void test_ss10_unchanged(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-10 -m 64");
++@@ -537,6 +660,7 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-ss600mp/dma-size-error", test_dma_size_error);
++     qtest_add_func("sun4m-ss600mp/esp-cfg2", test_esp_cfg2);
++     qtest_add_func("sun4m-ss600mp/esp-size-error", test_esp_size_error);
+++    qtest_add_func("sun4m-ss600mp/esp-dma-read", test_esp_dma_read);
 +     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
 + 
 +     return g_test_run();
