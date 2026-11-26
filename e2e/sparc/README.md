@@ -2737,6 +2737,8 @@ assets into `docs/public/recordings/` (git-ignored); `npm run build` doesn't nee
 | `openbsd59-install-ss5.cast`, `openbsd59-boot-ss5.cast` | `install` (no stored disk): `install-openbsd59-ss5/1-install-openbsd59-ss5/install`, `.../check` | `--speed 2`, `--speed 1` |
 | `redhat62-install-ss5.cast`, `redhat62-boot-ss5.cast` | `install` (no stored disk): `install-redhat62-ss5/1-install-redhat62-ss5/install`, `.../check` | `--speed 1`, `--speed 1` |
 | `sol9-boot-sun4u.cast` | `install` (stored disk): `install-sol9-sun4u/1-boot-test-sol9-sun4u/check` | `--max-idle 1 --speed 1` |
+| `<os>-install-<machine>.cast`, `<os>-boot-<machine>.cast` for the targets of the 2026-11-26 sweep (`sol23`, `sol24`, `sol25`, `sol251`, `sol7` on `ss5`/`ss20`, `sol26-*-ss10`, `sol7-*-ss10`, `sol251`/`sol26`/`sol7` on `sun4u`, `sunos414-*-ss5`, `sunos413u1b-*-ss20`, `netbsd111` and `netbsd93` on `ss5`/`ss20`/`sun4u`, `openbsd59-*-ss20`, `freebsd124-*-sun4u`, `redhat62-*-ss20`, `debian40-*-ss20`, `debian7-*-sun4u`, and the Web Start installs `sol8` on `ss5`/`ss5-prom`/`ss20`/`sun4u` and `sol9` on `ss5`/`ss20`) | `lab.py install <target> --check --out <runs>/install-<target>/1-install-<target>` (Debian 4.0 with `--gateway`/`--dns`): `install`, `check` | `--max-idle 1`, the speed per cast in `publish_media.py` (1-6) |
+| `wisp-netbsd-{ss4,classic,lx,voyager,sparcbook}.cast` | `e2e/wisp-netbsd/record.py` (its README, "Recordings"), uploaded by hand like wisp's casts | real time |
 
 The install-target rows come from runs in the PVE test container: `pve_matrix.py install` with the
 stored disks for the boot-tests and with an empty `--disks` directory for the installs (so it installs

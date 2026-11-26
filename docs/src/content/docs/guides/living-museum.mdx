@@ -14,13 +14,25 @@ and OS instead of read top to bottom.
 Not every machine has run every OS — the SPARCserver 600MP only ever got SunOS 4.1.2, and Solaris
 2.1 only ran on the SS-10. Where a combination hasn't been recorded, the picker says so and offers
 what has. FreeDOS 1.4 on an x86 PC (VGA text, time-lapse from the gallery) is there too; see the
-[DOS guide](/guides/dos/) for how those VMs are set up. Solaris 9, Solaris 10 and Tribblix (illumos)
-only ever ran on sun4u, and only as a boot of an already-installed disk — their Web Start and live-CD
-installs are too long to record afresh for a check. [wisp](/guides/wisp/), the lab's tiny nolibc test
-kernel, has no OS or installer at all: it boots straight from `-kernel` on three machines (SS-5,
-sun4u and the PC) to an ASCII Mandelbrot set and a power-off, timed in real time. Alpine Linux on
-aarch64 is there too, but as a VM Proxmox VE started directly rather than one of the lab's own
-install targets, so it has no "Try it yourself" line.
+[DOS guide](/guides/dos/) for how those VMs are set up.
+
+A sweep on 2026-11-26 recorded every short install target that had no recording yet, so most
+releases now have their install and first boot on more than one machine: Solaris 2.3 to 9 on the
+SS-5 and SS-20 (Solaris 8 on the SS-5 also under the Sun PROM), 2.6 and 7 on the SS-10, Solaris
+2.5.1, 2.6, 7 and 8 on sun4u, SunOS 4.1.4 and 4.1.3_U1B, NetBSD 11.1 and 9.3 on all three
+machines, OpenBSD 5.9 on the SS-20, FreeBSD 12.4 on sun4u, Red Hat 6.2 and Debian 4.0 on the
+SS-20 and Debian 7 on sun4u. Solaris 9 on sun4u, Solaris 10 and Tribblix (illumos) are still only
+a boot of an already-installed disk: their installs take one to four hours. The [lab install
+guide](/guides/lab-install/#regression-sweep-2026-11-26) has the sweep's results, including the one
+install that failed (Debian 13 on sun4u).
+
+[wisp](/guides/wisp/), the lab's tiny nolibc test kernel, has no OS or installer at all: it boots
+straight from `-kernel` on three machines (SS-5, sun4u and the PC) to an ASCII Mandelbrot set and a
+power-off, timed in real time. Its NetBSD sibling, wisp-netbsd, fills in the five sun4m machines
+that never ran an install (the SPARCstation 4, SPARCclassic, SPARCstation LX, SPARCstation Voyager
+and SPARCbook): a NetBSD 11.1 kernel with a one-program root, from OpenBIOS to power-off in under
+three seconds. Alpine Linux on aarch64 is there too, but as a VM Proxmox VE started directly
+rather than one of the lab's own install targets, so it has no "Try it yourself" line.
 
 <LivingMuseum />
 
@@ -31,7 +43,8 @@ own can make the same VM. Every target's root password is `wshlab` unless you pa
 change the password before one is reachable from anywhere untrusted (the [lab install
 guide](/guides/lab-install/) has the full warning, "Publicly known passwords"). wisp needs no
 Proxmox VE node and no install media, so its "Try it yourself" line is a [wisp
-guide](/guides/wisp/) `docker run` command instead, straight from `e2e/wisp/README.md`. Alpine on
+guide](/guides/wisp/) `docker run` command instead, straight from `e2e/wisp/README.md`; wisp-netbsd's
+comes from `e2e/wisp-netbsd/README.md` in the same way. Alpine on
 aarch64 has no "Try it yourself" line at all: it isn't a target the tool installs, just a VM
 Proxmox VE started directly.
 

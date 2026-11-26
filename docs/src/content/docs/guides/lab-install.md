@@ -867,3 +867,60 @@ The `wsh-lab` package is built and tested on every pull request that changes the
 in a clean Debian 13 `apt install` of the package, `wsh-lab --help`, `targets`, `media --dir`, the
 catalogue's tests against the installed copy, `wsh-lab-mcp --setup` and `apt purge`, which must
 leave nothing behind (`packages/wsh-lab/test.sh`).
+
+### Regression sweep, 2026-11-26
+
+Every short target that had no recording in the [recordings gallery](/guides/sparc-recordings/)
+was installed afresh with `lab.py install <target> --check` in the PVE test container with the
+published packages (pve-qemu-kvm 11.1.3-4+wsh30, qemu-server 9.2.24+wsh3, pve-manager
+9.2.41+wsh2), two installs at a time on the lab host, the Web Start targets last. The Debian 4.0
+and 13 targets had a route out through the test node (`--gateway`, `--dns`). The passing runs'
+recordings are in the gallery and the [Living museum](/guides/living-museum/). Times are the
+install, first boot and check phases. One install failed: 33 of 34 passed.
+
+| Target | Result | Install | First boot | Check | Total |
+| --- | --- | --- | --- | --- | --- |
+| `sol23-ss5` | passed | 324 s | 135 s | 75 s | 9.1 min |
+| `sol23-ss20` | passed | 278 s | 136 s | 75 s | 8.4 min |
+| `sol24-ss5` | passed | 283 s | 132 s | 70 s | 8.4 min |
+| `sol24-ss20` | passed | 270 s | 132 s | 71 s | 8.2 min |
+| `sol25-ss5` | passed | 254 s | 159 s | 76 s | 8.4 min |
+| `sol25-ss20` | passed | 244 s | 158 s | 77 s | 8.3 min |
+| `sol251-ss5` | passed | 2108 s | 177 s | 94 s | 39.9 min |
+| `sol251-ss20` | passed | 2012 s | 169 s | 85 s | 38.0 min |
+| `sol26-ss10` | passed | 429 s | 224 s | 132 s | 13.4 min |
+| `sol7-ss5` | passed | 342 s | 196 s | 88 s | 10.7 min |
+| `sol7-ss10` | passed | 334 s | 199 s | 90 s | 10.7 min |
+| `sol7-ss20` | passed | 333 s | 198 s | 89 s | 10.6 min |
+| `sol251-sun4u` | passed | 3289 s | 313 s | 223 s | 64.0 min |
+| `sol26-sun4u` | passed | 771 s | 366 s | 250 s | 23.4 min |
+| `sol7-sun4u` | passed | 680 s | 358 s | 244 s | 21.7 min |
+| `sunos414-ss5` | passed (CD converted from the BIN first) | 128 s | 157 s | 53 s | 6.0 min |
+| `sunos413u1b-ss20` | passed | 234 s | 148 s | 54 s | 7.7 min |
+| `netbsd111-sparc-ss20` | passed | 188 s | 116 s | 58 s | 6.3 min |
+| `netbsd111-sparc64` | passed | 373 s | 142 s | 99 s | 10.5 min |
+| `netbsd93-sparc` | passed | 155 s | 115 s | 52 s | 5.7 min |
+| `netbsd93-sparc-ss20` | passed | 147 s | 114 s | 50 s | 5.5 min |
+| `netbsd93-sparc64` | passed | 735 s | 137 s | 83 s | 16.2 min |
+| `openbsd59-ss20` | passed | 218 s | 282 s | 53 s | 9.6 min |
+| `freebsd124-sun4u` | passed (power-off works with the published OpenBIOS) | 586 s | 216 s | 130 s | 15.9 min |
+| `redhat62-ss20` | passed | 84 s | 114 s | 43 s | 4.4 min |
+| `debian40-ss20` | passed | 821 s | 107 s | 60 s | 16.8 min |
+| `debian7-sun4u` | passed | 3799 s | 209 s | 258 s | 71.5 min |
+| `debian13-sun4u` | **failed** in the install, see below | 10744 s | | | 179.3 min |
+| `sol8-ss5` | passed | 1820 s | 221 s | 96 s | 36.1 min |
+| `sol8-ss5-prom` | passed | 1680 s | 224 s | 104 s | 33.8 min |
+| `sol8-ss20` | passed | 1545 s | 220 s | 92 s | 31.3 min |
+| `sol9-ss5` | passed | 1407 s | 276 s | 75 s | 29.7 min |
+| `sol9-ss20` | passed | 1432 s | 293 s | 104 s | 31.0 min |
+| `sol8-sun4u` | passed | 2584 s | 379 s | 265 s | 54.2 min |
+
+**`debian13-sun4u`** reached the end of debian-installer: the base system, the SSH server task and
+GRUB went in (`Running "grub-install /dev/sda1"...`, `update-grub`, `Updating
+/etc/kernel-img.conf...` to 100%), but then the installer came back to its main menu instead of
+finishing and rebooting. The scenario took the main menu for a question box and stopped at
+10736 s, just under the phase's 10800 s limit (`AssertionError: debian-installer stopped at a
+question or an error (the last snapshot)`). Not investigated yet, and the target's stored disk
+was not boot-tested in this sweep. During the Web Start installs the lab host stopped answering
+for about 25 minutes (afterwards with 1.9 GB of swap in use); the two installs running then passed
+anyway.
