@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..a30d3fe 100644
+index bc240a0..92e6040 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,142 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,144 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -216,6 +216,8 @@ index bc240a0..a30d3fe 100644
 +wsh/0185-hw-scsi-esp-take-the-LUN-from-the-CDB-without-IDENTI.patch
 +wsh/0186-hw-sparc-sun4m-give-the-SS-600MP-s-audio-chip-regist.patch
 +wsh/0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers-.patch
++wsh/0188-hw-sparc-sun4m-give-the-SS-600MP-boot-PROM-a-configu.patch
++wsh/0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -28499,6 +28501,361 @@ index 0000000..79e0c73
 ++    qtest_add_func("sun4m-ss600mp/mxcc-mbus", test_mxcc_mbus);
 ++    qtest_add_func("sun4m-ss600mp/esp-cdb-lun", test_esp_cdb_lun);
 ++    qtest_add_func("sun4m-ss600mp/audio-regs", test_audio_regs);
++     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
++ 
++     return g_test_run();
+diff --git a/debian/patches/wsh/0188-hw-sparc-sun4m-give-the-SS-600MP-boot-PROM-a-configu.patch b/debian/patches/wsh/0188-hw-sparc-sun4m-give-the-SS-600MP-boot-PROM-a-configu.patch
+new file mode 100644
+index 0000000..969e8ee
+--- /dev/null
++++ b/debian/patches/wsh/0188-hw-sparc-sun4m-give-the-SS-600MP-boot-PROM-a-configu.patch
+@@ -0,0 +1,216 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: give the SS-600MP boot PROM a configuration
++ it accepts
++
++Sun's SS-600MP boot PROM (ROM Rev. 2.14) checks the configuration area
++it keeps in the first 6 KB of the M48T08. QEMU writes OpenBIOS's
++partitions there, so the PROM reported "Incorrect configuration
++checksum", set its defaults with diag-switch? true and booted from the
++network, retrying forever; only Stop-A on the keyboard reached "ok", and
++through PVE (-nographic, no keyboard) nothing did. An NVRAM image the
++PROM had written that way then hung the next power-on in its self test.
++
++The layout, worked out in the lab from the bytes its "setenv" changes:
++byte 0 is the checksum, the XOR of bytes 0x20-0x17ff and 0xd2; bytes
++1-4 are flags the self test reads outside the checksum (diag-switch?,
++mfg-switch?, skip-vme-loopback?); a boolean is 0xff or 0, a number a
++byte, a string a length byte, its characters and a NUL.
++
++New hwdef field prom_config, set on the SS-600MP only: when the firmware
++isn't OpenBIOS and the NVRAM isn't an image that was written before, the
++NVRAM gets that configuration area, with the PROM's own defaults except
++diag-switch? false and auto-boot? false (it stops at "ok") and
++skip-vme-loopback? true (QEMU has no VMEbus; once the configuration is
++valid the self test's VME loopback test runs and loops on its failure).
++The IDPROM is written as before. -prom-env has no effect there (a
++warning). OpenBIOS on the SS-600MP and the other machines, with OpenBIOS
++or a Sun PROM, keep OpenBIOS's partitions, byte for byte.
++
++With it the PROM reaches "ok" within 10 seconds without a keyboard, and
++a "setenv" kept in an NVRAM image lasts across starts.
++---
++ hw/sparc/sun4m.c | 131 +++++++++++++++++++++++++++++++++++++++++++----
++ 1 file changed, 120 insertions(+), 11 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 3bacb26a..cbff407f 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -129,6 +129,7 @@ struct sun4m_hwdef {
++     uint8_t esp_cfg2_mask;      /* if set: the bits the ESP's config 2 keeps */
++     bool esp_cdb_lun;           /* no IDENTIFY: the ESP's LUN from the CDB */
++     bool mbus_mxcc;             /* an MXCC's registers in its MBus space */
+++    bool prom_config;           /* Sun's PROM: its configuration area */
++ };
++ 
++ struct Sun4mMachineClass {
++@@ -167,11 +168,91 @@ static void fw_cfg_boot_set(void *opaque, const char *boot_device,
++     fw_cfg_modify_i16(opaque, FW_CFG_BOOT_DEVICE, boot_device[0]);
++ }
++ 
+++/*
+++ * The configuration area Sun's SPARCserver 600MP boot PROM (ROM Rev. 2.14)
+++ * keeps in the first 6 KB of the M48T08, worked out in the lab from the
+++ * bytes its "setenv" changes. Bytes 1-4 are flags its power-on self test
+++ * reads (diag-switch?, mfg-switch?, skip-vme-loopback?), outside the
+++ * checksum. Byte 0 is the checksum: the XOR of bytes 0x20-0x17ff and 0xd2.
+++ * A boolean is 0xff (true) or 0, a number a byte, a string a length byte,
+++ * the characters and a NUL. Anything not set here is 0: false, empty or
+++ * none. Above 0x1800 the PROM keeps scratch data of its self test.
+++ */
+++#define SS600MP_CFG_CKSUM       0x000
+++#define SS600MP_CFG_DIAG        0x001   /* diag-switch? */
+++#define SS600MP_CFG_SKIP_VME    0x004   /* skip-vme-loopback? */
+++#define SS600MP_CFG_START       0x020   /* the checksummed bytes */
+++#define SS600MP_CFG_END         0x1800
+++#define SS600MP_CFG_SEED        0xd2
+++#define SS600MP_CFG_BOOT_DEV    0x29f   /* boot-device */
+++#define SS600MP_CFG_DIAG_DEV    0x423   /* diag-device */
+++#define SS600MP_CFG_AUTO_BOOT   0x5a8   /* auto-boot? */
+++#define SS600MP_CFG_SBUS_PROBE  0x5a9   /* sbus-probe-list */
+++#define SS600MP_CFG_SCSI_ID     0x5b3   /* scsi-initiator-id */
+++#define SS600MP_CFG_SELFTEST    0x5b7   /* selftest-#megs */
+++#define SS600MP_CFG_ROWS        0x5b8   /* screen-#rows */
+++#define SS600MP_CFG_COLUMNS     0x5b9   /* screen-#columns */
+++#define SS600MP_CFG_TTYA_MODE   0x5bc   /* ttya-mode */
+++#define SS600MP_CFG_TTYB_MODE   0x5ce   /* ttyb-mode */
+++#define SS600MP_CFG_TTYA_CD     0x5e0   /* ttya-ignore-cd */
+++#define SS600MP_CFG_TTYB_CD     0x5e2   /* ttyb-ignore-cd */
+++#define SS600MP_CFG_INPUT       0x769   /* input-device */
+++#define SS600MP_CFG_OUTPUT      0x78b   /* output-device */
+++
+++static void ss600mp_cfg_string(uint8_t *image, unsigned int offset,
+++                               const char *value)
+++{
+++    size_t len = strlen(value);
+++
+++    image[offset] = len;
+++    memcpy(&image[offset + 1], value, len);
+++    image[offset + 1 + len] = '\0';
+++}
+++
+++/*
+++ * The PROM's own defaults, with three exceptions. With a configuration
+++ * that fails its checksum (OpenBIOS's layout, which QEMU writes otherwise)
+++ * the PROM sets its defaults and diag-switch? true, then boots from the
+++ * network and retries forever. Here diag-switch? and auto-boot? are false,
+++ * so it stops at "ok". skip-vme-loopback? is true: QEMU has no VMEbus, and
+++ * the self test's VME loopback test, which runs once the configuration is
+++ * valid, loops on its failure without a word.
+++ */
+++static void ss600mp_prom_config(uint8_t *image)
+++{
+++    uint8_t sum = SS600MP_CFG_SEED;
+++    unsigned int i;
+++
+++    memset(image, 0, SS600MP_CFG_END);
+++    image[SS600MP_CFG_DIAG] = 0x00;
+++    image[SS600MP_CFG_SKIP_VME] = 0xff;
+++    ss600mp_cfg_string(image, SS600MP_CFG_BOOT_DEV, "ipi disk net");
+++    ss600mp_cfg_string(image, SS600MP_CFG_DIAG_DEV, "net");
+++    image[SS600MP_CFG_AUTO_BOOT] = 0x00;
+++    ss600mp_cfg_string(image, SS600MP_CFG_SBUS_PROBE, "f0123");
+++    image[SS600MP_CFG_SCSI_ID] = 7;
+++    image[SS600MP_CFG_SELFTEST] = 1;
+++    image[SS600MP_CFG_ROWS] = 34;
+++    image[SS600MP_CFG_COLUMNS] = 80;
+++    ss600mp_cfg_string(image, SS600MP_CFG_TTYA_MODE, "9600,8,n,1,-");
+++    ss600mp_cfg_string(image, SS600MP_CFG_TTYB_MODE, "9600,8,n,1,-");
+++    image[SS600MP_CFG_TTYA_CD] = 0xff;
+++    image[SS600MP_CFG_TTYB_CD] = 0xff;
+++    ss600mp_cfg_string(image, SS600MP_CFG_INPUT, "keyboard");
+++    ss600mp_cfg_string(image, SS600MP_CFG_OUTPUT, "screen");
+++
+++    for (i = SS600MP_CFG_START; i < SS600MP_CFG_END; i++) {
+++        sum ^= image[i];
+++    }
+++    image[SS600MP_CFG_CKSUM] = sum;
+++}
+++
++ static void nvram_init(Nvram *nvram, uint8_t *macaddr,
++                        const char *cmdline, const char *boot_devices,
++                        ram_addr_t RAM_size, uint32_t kernel_size,
++                        int width, int height, int depth,
++-                       int nvram_machine_id, const char *arch)
+++                       int nvram_machine_id, const char *arch,
+++                       bool prom_config)
++ {
++     unsigned int i, start;
++     int sysp_end;
++@@ -184,20 +265,30 @@ static void nvram_init(Nvram *nvram, uint8_t *macaddr,
++      * or OpenBIOS's variables. Leave it, and write only the IDPROM, the
++      * machine's identity, which comes from the command line (machine type,
++      * MAC address) on every start. With -prom-env the OpenBIOS partitions
++-     * are written on every start too, as without an image.
+++     * are written on every start too, as without an image (not for the
+++     * SS-600MP's own PROM, whose configuration is never OpenBIOS's).
++      */
++     start = 0;
++-    if (m48t59_nvram_restored(nvram) && nb_prom_envs == 0) {
+++    if (m48t59_nvram_restored(nvram) && (nb_prom_envs == 0 || prom_config)) {
++         start = 0x1fd8;
++     }
++ 
++     memset(image, '\0', sizeof(image));
++ 
++-    /* OpenBIOS nvram variables partition */
++-    sysp_end = chrp_nvram_create_system_partition(image, 0, 0x1fd0);
+++    if (prom_config) {
+++        if (nb_prom_envs > 0) {
+++            warn_report("-prom-env is for OpenBIOS: the SS-600MP boot PROM "
+++                        "keeps its own configuration in the NVRAM");
+++        }
+++        ss600mp_prom_config(image);
+++    } else {
+++        /* OpenBIOS nvram variables partition */
+++        sysp_end = chrp_nvram_create_system_partition(image, 0, 0x1fd0);
++ 
++-    /* Free space partition */
++-    chrp_nvram_create_free_partition(&image[sysp_end], 0x1fd0 - sysp_end);
+++        /* Free space partition */
+++        chrp_nvram_create_free_partition(&image[sysp_end],
+++                                         0x1fd0 - sysp_end);
+++    }
++ 
++     Sun_init_header((struct Sun_nvram *)&image[0x1fd8], macaddr,
++                     nvram_machine_id);
++@@ -1625,10 +1716,21 @@ static void sun4m_hw_init(MachineState *machine)
++                                     machine->initrd_filename,
++                                     machine->ram_size, &initrd_size);
++ 
++-    nvram_init(nvram, hostid.a, machine->kernel_cmdline,
++-               machine->boot_config.order, machine->ram_size, kernel_size,
++-               graphic_width, graphic_height, graphic_depth,
++-               hwdef->nvram_machine_id, "Sun4m");
+++    {
+++        g_autofree char *prom = g_path_get_basename(machine->firmware ?:
+++                                                    PROM_FILENAME);
+++
+++        /*
+++         * Sun's own PROM on the SS-600MP gets a configuration area it
+++         * accepts; OpenBIOS, and the Sun PROMs of the other machines, get
+++         * OpenBIOS's partitions as before.
+++         */
+++        nvram_init(nvram, hostid.a, machine->kernel_cmdline,
+++                   machine->boot_config.order, machine->ram_size, kernel_size,
+++                   graphic_width, graphic_height, graphic_depth,
+++                   hwdef->nvram_machine_id, "Sun4m",
+++                   hwdef->prom_config && !g_str_has_prefix(prom, "openbios"));
+++    }
++ 
++     if (hwdef->ecc_base) {
++         uint32_t ecc_version = hwdef->ecc_version;
++@@ -1833,6 +1935,13 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          * model of the chip. OpenBIOS makes no such node.
++          */
++         .amd_audio_base = 0xff1500000ULL,
+++        /*
+++         * Its boot PROM finds OpenBIOS's NVRAM layout invalid, sets
+++         * diag-switch? and boots from the network forever: with that PROM
+++         * (any firmware but OpenBIOS) a blank NVRAM gets the PROM's own
+++         * configuration area instead.
+++         */
+++        .prom_config = true,
++         .nvram_machine_id = 0x71,
++         .machine_id = ss600mp_id,
++         /*
+diff --git a/debian/patches/wsh/0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf.patch b/debian/patches/wsh/0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf.patch
+new file mode 100644
+index 0000000..452569d
+--- /dev/null
++++ b/debian/patches/wsh/0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf.patch
+@@ -0,0 +1,127 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP boot PROM's NVRAM
++ configuration area
++
++New sun4m-ss600mp-test case prom-nvram for the previous patch: with a
++firmware that isn't OpenBIOS (a file of zeros; nothing runs under qtest)
++the SS-600MP's NVRAM has the PROM's configuration area with a right
++checksum, diag-switch? and auto-boot? false, skip-vme-loopback? true and
++the PROM's defaults, and the IDPROM as before; OpenBIOS on the SS-600MP
++and the SS-20 with that firmware keep OpenBIOS's first partition; an
++NVRAM image that isn't blank is left alone except the IDPROM. It fails
++without the previous patch.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 79 ++++++++++++++++++++++++++++++++
++ 1 file changed, 79 insertions(+)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index 32b1c7ab..71cd01ef 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -68,6 +68,14 @@
++  * SunOS 4.1.2's audio driver writes its eight byte registers: they read 0
++  * and ignore writes. The SS-10 has nothing there.
++  *
+++ * With Sun's boot PROM (any firmware but OpenBIOS) a blank NVRAM gets the
+++ * PROM's configuration area: its checksum (the XOR of bytes 0x20-0x17ff
+++ * and 0xd2) right, diag-switch? and auto-boot? false, skip-vme-loopback?
+++ * true and the PROM's defaults, so it stops at "ok" instead of setting its
+++ * defaults with diag-switch? true and booting from the network. OpenBIOS,
+++ * the SS-20 with a Sun PROM and an NVRAM image that isn't blank keep
+++ * what they had.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -134,6 +142,11 @@
++ /* the system interrupt pending register of the slavio interrupt controller */
++ #define INTCTL_PENDING  0xff1410000ULL
++ #define IRQ_LE          (1u << 16)
+++#define NVRAM           0xff1200000ULL
+++#define CHRP_SYSTEM     0x70            /* OpenBIOS's first partition */
+++#define CFG_START       0x20            /* the PROM's checksummed bytes */
+++#define CFG_END         0x1800
+++#define CFG_SEED        0xd2
++ 
++ #define CSR0_INIT       0x0001
++ #define CSR0_STRT       0x0002
++@@ -792,6 +805,71 @@ static void test_audio_regs(void)
++     qtest_quit(qts);
++ }
++ 
+++/* a firmware image that isn't OpenBIOS (nothing runs under qtest) */
+++static char *fake_prom(void)
+++{
+++    char *path;
+++    int fd = g_file_open_tmp("sun-prom-XXXXXX.bin", &path, NULL);
+++    uint8_t zeros[256] = { 0 };
+++
+++    g_assert_cmpint(fd, >=, 0);
+++    g_assert_cmpint(write(fd, zeros, sizeof(zeros)), ==, sizeof(zeros));
+++    close(fd);
+++    return path;
+++}
+++
+++static void test_prom_nvram(void)
+++{
+++    g_autofree char *prom = fake_prom();
+++    g_autofree char *image = NULL;
+++    uint8_t cfg[CFG_END], sum = CFG_SEED, fill[8192];
+++    QTestState *qts;
+++    int i, fd;
+++
+++    qts = qtest_initf("-machine SS-600MP -m 64 -bios %s", prom);
+++    qtest_memread(qts, NVRAM, cfg, sizeof(cfg));
+++    for (i = CFG_START; i < CFG_END; i++) {
+++        sum ^= cfg[i];
+++    }
+++    g_assert_cmphex(cfg[0], ==, sum);
+++    g_assert_cmphex(cfg[1], ==, 0x00);          /* diag-switch? false */
+++    g_assert_cmphex(cfg[4], ==, 0xff);          /* skip-vme-loopback? */
+++    g_assert_cmphex(cfg[0x5a8], ==, 0x00);      /* auto-boot? false */
+++    g_assert_cmpmem(&cfg[0x5a9], 7, "\x05" "f0123", 7); /* sbus-probe-list */
+++    g_assert_cmphex(cfg[0x5b3], ==, 7);         /* scsi-initiator-id */
+++    g_assert_cmpmem(&cfg[0x5bc], 14, "\x0c" "9600,8,n,1,-", 14); /* ttya */
+++    g_assert_cmpmem(&cfg[0x78b], 8, "\x06" "screen", 8); /* output-device */
+++    /* the IDPROM as before: format 1, the 600MP's machine type */
+++    g_assert_cmphex(qtest_readb(qts, NVRAM + 0x1fd8), ==, 0x01);
+++    g_assert_cmphex(qtest_readb(qts, NVRAM + 0x1fd9), ==, 0x71);
+++    qtest_quit(qts);
+++
+++    /* OpenBIOS on the SS-600MP, and the SS-20 with a Sun PROM: OpenBIOS's */
+++    qts = qtest_init("-machine SS-600MP -m 64");
+++    g_assert_cmphex(qtest_readb(qts, NVRAM), ==, CHRP_SYSTEM);
+++    qtest_quit(qts);
+++    qts = qtest_initf("-machine SS-20 -m 64 -bios %s", prom);
+++    g_assert_cmphex(qtest_readb(qts, NVRAM), ==, CHRP_SYSTEM);
+++    qtest_quit(qts);
+++
+++    /* an image the PROM has written is left alone, the IDPROM aside */
+++    fd = g_file_open_tmp("sun4m-nvram-XXXXXX.img", &image, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    memset(fill, 0x5a, sizeof(fill));
+++    g_assert_cmpint(write(fd, fill, sizeof(fill)), ==, sizeof(fill));
+++    close(fd);
+++    qts = qtest_initf("-machine SS-600MP -m 64 -bios %s "
+++                      "-drive if=none,id=nvram0,format=raw,file=%s "
+++                      "-global sysbus-m48t08.drive=nvram0", prom, image);
+++    g_assert_cmphex(qtest_readb(qts, NVRAM), ==, 0x5a);
+++    g_assert_cmphex(qtest_readb(qts, NVRAM + 0x5a8), ==, 0x5a);
+++    g_assert_cmphex(qtest_readb(qts, NVRAM + 0x1fd9), ==, 0x71);
+++    qtest_quit(qts);
+++
+++    unlink(image);
+++    unlink(prom);
+++}
+++
++ static void test_ss10_unchanged(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-10 -m 64");
++@@ -823,6 +901,7 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-ss600mp/mxcc-mbus", test_mxcc_mbus);
++     qtest_add_func("sun4m-ss600mp/esp-cdb-lun", test_esp_cdb_lun);
++     qtest_add_func("sun4m-ss600mp/audio-regs", test_audio_regs);
+++    qtest_add_func("sun4m-ss600mp/prom-nvram", test_prom_nvram);
 +     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
 + 
 +     return g_test_run();

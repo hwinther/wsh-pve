@@ -87,6 +87,14 @@ interrupt delay](/guides/sparc/#scsi-interrupt-delay-esp-irq-latency), in pve-qe
 `sunos412-ss600mp` (SunOS 4.1.2 on the SPARCserver 600MP, one CPU) installs like the other SunOS 4
 targets; it needs `pve-qemu-kvm` 11.1.3-3+wsh13 or later and a qemu-server and pve-manager with the
 [SS-600MP profile](/guides/sparc/#supported-sparc32-profiles).
+`sunos412-ss600mp-prom` is the same install under Sun's own 600MP PROM (`bios: ss600mp.bin`): the
+same CD, disk, answers and login, 256 MB in every phase (the PROM's self test loops with less) and no
+`args`. QEMU gives the PROM a configuration with `auto-boot?` false, so each start stops at `ok` on
+the serial console: the install types `boot cdrom` there, the PROM boots the miniroot from its reboot
+string by itself, and the first boot and the check type `boot disk`. It needs a `pve-qemu-kvm` with
+pve-qemu patches up to `wsh/0188`, a qemu-server with `ss600mp.bin` in the SS-600MP profile and the
+PROM image in `/usr/share/kvm/` on the node, which no package has (see [The SPARCserver
+600MP](/guides/sparc/#the-sparcserver-600mp)); about 6.5 minutes through PVE.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),

@@ -34,7 +34,7 @@ config change and on start) with a message naming the allowed values, and the wi
 | SS-20 | OpenBIOS | the machine's | 1 (default) to 4 | up to 2048 MB (512 MB in the wizard) |
 | SS-20 | `ss20_v2.25_rom` | `TI-SuperSparc-50` (set automatically) | 1 | up to 512 MB |
 | LX | `lx.bin` only (see [The SPARCstation LX](#the-sparcstation-lx)) | the machine's | 1 | up to 128 MB |
-| SS-600MP | OpenBIOS only (see [The SPARCserver 600MP](#the-sparcserver-600mp)) | the machine's | 1 | up to 1024 MB |
+| SS-600MP | OpenBIOS (default) or `ss600mp.bin` (see [The SPARCserver 600MP](#the-sparcserver-600mp)) | the machine's | 1 | up to 1024 MB (256 MB or more with `ss600mp.bin`) |
 
 CPUs are sockets × cores (any split; Solaris sees each as a CPU module of its own, see
 [More than one CPU](#more-than-one-cpu)). Display `cg3` (default), `tcx`, a serial console (serial0/serial1) or none; one
@@ -63,17 +63,32 @@ network device, `lance`. The LX takes a serial console on `serial0` (its default
 
 ### The SPARCserver 600MP
 
-`machine: SS-600MP` is the first sun4m machine, for SunOS 4.1.2 (its first release), under OpenBIOS.
-It needs `pve-qemu-kvm` 11.1.3-3+wsh13 or later (the 600MP's VMEbus registers and the buffer memory
-its network chip works in, and the device names 4.1.2 looks for) and a qemu-server and pve-manager
-with the SS-600MP profile. The lab target `sunos412-ss600mp` installs it (see [Lab
-install](/guides/lab-install/)); its install and boot are on [SPARC lab
+`machine: SS-600MP` is the first sun4m machine, for SunOS 4.1.2 (its first release), under OpenBIOS
+or Sun's own 600MP boot PROM. It needs `pve-qemu-kvm` 11.1.3-3+wsh13 or later (the 600MP's VMEbus
+registers and the buffer memory its network chip works in, and the device names 4.1.2 looks for) and
+a qemu-server and pve-manager with the SS-600MP profile. The lab target `sunos412-ss600mp` installs it
+(see [Lab install](/guides/lab-install/)); its install and boot are on [SPARC lab
 recordings](/guides/sparc-recordings/#sunos-412-on-sparcserver-600mp).
 
-- **OpenBIOS only, one CPU:** the real machine has Ross RT625 CPU modules, which QEMU doesn't
-  emulate (it gives the machine a SuperSPARC). Sun's own 600MP boot PROM needs one, and so does
-  4.1.2's start of a second CPU (CPU 1 panics), so a Sun PROM or more than one CPU is refused with
-  that reason, and the wizard offers neither.
+- **One CPU:** the real machine shipped with Ross CPU modules, which QEMU doesn't emulate (it gives
+  the machine a SuperSPARC), and 4.1.2's start of a second CPU needs one (CPU 1 panics), so more
+  than one CPU is refused with that reason, and the wizard doesn't offer it.
+- **Sun's 600MP PROM** (`bios: ss600mp.bin`, ROM Rev. 2.14, also a SuperSPARC PROM) needs a
+  `pve-qemu-kvm` with pve-qemu patches up to `wsh/0188` and a qemu-server and pve-manager that list it
+  in the SS-600MP profile. The image isn't in any package: put your own in `/usr/share/kvm/` on the
+  node (`wsh-sun-proms install --source <your source> ss600mp.bin`, below, checks it against its
+  hash); without it the VM doesn't start (`could not load prom 'ss600mp.bin'`). Give it 256 MB or
+  more (with 64 or 128 MB its self test loops before it prints anything) and a serial console
+  (`vga: serial0`): without a keyboard it says `No Keyboard` and uses ttya, and `qm terminal <vmid>`
+  is the console.
+- **Getting to `ok`:** QEMU gives this PROM a configuration it accepts, with `auto-boot?` and
+  `diag-switch?` false, so it stops at `ok` on the console about 10 s after the start, every start.
+  Type `boot cdrom` or `boot disk` there. With an [NVRAM volume](#making-a-sun-prom-vm-boot-by-itself)
+  what you `setenv` lasts: `setenv boot-device disk` and `setenv auto-boot? true` make it boot the
+  disk by itself from then on. The lab target `sunos412-ss600mp-prom` installs 4.1.2 from its CD
+  under this PROM. (With a package before `wsh/0188` the PROM found QEMU's NVRAM invalid, set
+  `diag-switch?` and booted from the network for ever; only Stop-A on a keyboard stopped it, which a
+  serial console doesn't have.)
 - **Memory:** 4.1.2 boots with 256 MB to 2 GB; up to 1024 MB is allowed, the wizard presets 256.
 - **Console:** 4.1.2 was tested on the serial console (`vga: serial0`; its `getty` sends even
   parity in bit 7, so set your terminal to 7 bits). OpenBIOS also draws on cg3 and TCX. On a cg3
@@ -89,14 +104,14 @@ recordings](/guides/sparc-recordings/#sunos-412-on-sparcserver-600mp).
 `wsh-sun-proms`, in the `wsh-lab` package (`apt install wsh-lab`), installs Sun boot PROM images
 you are entitled to use, from a source you provide, into `/usr/share/kvm` on the node. That is where
 QEMU loads firmware from, so the BIOS selector and the profiles above find them by name (`ss5.bin`,
-`ss20_v2.25_rom`, `lx.bin`). The tool has no images and no default source. It checks every file
+`ss20_v2.25_rom`, `lx.bin`, `ss600mp.bin`). The tool has no images and no default source. It checks every file
 against a manifest of known images (file name, size, SHA-256 and the machine that runs it) and
 refuses an unknown or differing file unless you add `--force`.
 
 ```sh
 wsh-sun-proms install --source <your PROM source>   # as root on the node
 wsh-sun-proms status                                # which PROMs are there, and from where
-wsh-sun-proms verify --all                          # exit 1 unless all four are there and match
+wsh-sun-proms verify --all                          # exit 1 unless all five are there and match
 ```
 
 The source can be:
@@ -827,10 +842,10 @@ on sun4u".
   more than one CPU only for Solaris 2.5.1-9 (NetBSD's and Solaris 2.3/2.4's MP kernels idle by
   themselves); 256 MB on SS-5,
   2048 MB on SS-10/SS-20 (512 MB with the Sun PROM).
-- Of the Sun PROMs only `ss5.bin` (SS-5), `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`) and
-  `lx.bin` (LX, serial console only) are supported; the SS-10 PROM doesn't run on QEMU's
-  SS-10, and the SS-600MP's needs a Ross RT625 CPU module QEMU doesn't have (OpenBIOS and one CPU
-  only there).
+- Of the Sun PROMs only `ss5.bin` (SS-5), `ss20_v2.25_rom` (SS-20, with `TI-SuperSparc-50`),
+  `lx.bin` (LX, serial console only) and `ss600mp.bin` (SS-600MP, 256 MB or more, serial console)
+  are supported; the SS-10 PROM doesn't run on QEMU's SS-10. The SS-600MP takes one CPU (a second
+  needs a Ross RT625 module QEMU doesn't have).
 - With `pve-qemu-kvm` up to 11.1.3-2+wsh25, a BEL on a cg3/TCX console with OpenBIOS hangs Solaris and SunOS with
   the screen inverted (bash's completion bell); see [The bell on a framebuffer
   console](#the-bell-on-a-framebuffer-console) for the workaround.

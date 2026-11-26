@@ -1285,6 +1285,28 @@ class OlderSun(unittest.TestCase):
         self.assertIn("SunOS 4.1.2 ", t["net_refuse"]["dns"])
         self.assertEqual(targets.problems(), [])
 
+    def test_sunos412_prom_target(self):
+        # The same install under Sun's 600MP PROM (pve-qemu wsh/0188: an NVRAM configuration it accepts,
+        # so it stops at `ok`): bios ss600mp.bin, 256 MB in every phase (the PROM's self test loops with
+        # 64 or 128 MB), no -prom-env; the scenarios, vars, disk and media as the OpenBIOS target's
+        base = targets.TARGETS["sunos412-ss600mp"]
+        t = targets.TARGETS["sunos412-ss600mp-prom"]
+        self.assertEqual(t["status"], "automated")
+        self.assertIn("sunos412-ss600mp-prom", targets.automated())
+        self.assertEqual(t["profile"], {**base["profile"], "bios": "ss600mp.bin"})
+        self.assertNotIn("memory", t["install"])
+        self.assertNotIn("prom_env", t["install"])
+        self.assertEqual({k: v for k, v in t["install"].items()},
+                         {k: v for k, v in base["install"].items() if k not in ("memory", "prom_env")})
+        for phase in ("firstboot", "check"):
+            self.assertEqual(t[phase], base[phase])
+        self.assertEqual((t["disk"], t["media"], t["boot"], t["hostname"]),
+                         (base["disk"], base["media"], base["boot"], base["hostname"]))
+        self.assertIn("600MP PROM", t["title"])
+        self.assertIn("ss600mp.bin", t["tested"]["packages"]["qemu-server"])
+        self.assertIn("wsh/0189", t["tested"]["packages"]["pve-qemu-kvm"])
+        self.assertEqual(targets.problems(), [])
+
     def test_serial_7bit(self):
         # SERIAL_7BIT: SunOS 4.1.2's getty sends even parity in bit 7 ("sunos412 login: " arrives with
         # some letters | 0x80); the terminal and the text see 7 bits, serial.raw keeps what came
