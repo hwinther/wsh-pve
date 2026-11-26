@@ -159,6 +159,15 @@ export async function qemuServerHasMesaDisplay(): Promise<boolean> {
 }
 
 /**
+ * Whether the installed qemu-server passes accel=kvm to the 3dfx binary when the VM's kvm option is on
+ * (before, QEMU chose TCG for it: the binary's name doesn't end in "kvm").
+ * TODO: remove with the skip once a qemu-server with it is published.
+ */
+export async function qemuServerNames3dfxAccel(): Promise<boolean> {
+  return installedHas('/usr/share/perl5/PVE/QemuServer.pm', "push @$machineFlags, 'accel=kvm';")
+}
+
+/**
  * Whether the installed pve-manager has the "3DFX/Mesa display" field in the Display dialog.
  * TODO: remove with the skips once a pve-manager with it is published.
  */
