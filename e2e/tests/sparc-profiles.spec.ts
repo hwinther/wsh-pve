@@ -1425,6 +1425,8 @@ test.describe('web UI', () => {
   let machinesOffered = ['Default (SS-5)', 'SS-10', 'SS-20']
   let uiHasLx = false
   let uiHasSs600mp = false
+  /** Whether the installed pve-manager offers Sun's 600MP PROM (ss600mp.bin) on SS-600MP. */
+  let uiHasSs600mpProm = false
   /** Whether the installed pve-manager hides EFI Disk and TPM State on sparc. */
   let uiHidesFwDisks = false
   /** Whether the installed pve-manager takes more than 512 MB on SS-10/SS-20 with OpenBIOS. */
@@ -1434,6 +1436,7 @@ test.describe('web UI', () => {
     const js = '/usr/share/pve-manager/js/pvemanagerlib.js'
     uiHasLx = (await pveExec(['grep', '-q', 'SPARCstation LX PROM', js])).code === 0
     uiHasSs600mp = (await pveExec(['grep', '-q', "'SS-600MP'", js])).code === 0
+    uiHasSs600mpProm = (await pveExec(['grep', '-q', 'SPARCserver 600MP PROM', js])).code === 0
     if (uiHasSs600mp) machinesOffered = [...machinesOffered, 'SS-600MP']
     if (uiHasLx) machinesOffered = [...machinesOffered, 'LX']
     uiHidesFwDisks = await pveManagerHidesSparcFwDisks()
@@ -1566,7 +1569,7 @@ test.describe('web UI', () => {
     expect(cmd).toContain('-nographic')
   })
 
-  test('create wizard: SS-600MP, OpenBIOS only, one CPU, 256 MB preset and 1024 at most', async ({ page }) => {
+  test('create wizard: SS-600MP, OpenBIOS by default, one CPU, 256 MB preset and 1024 at most', async ({ page }) => {
     // eslint-disable-next-line playwright/no-skipped-test -- until the published pve-manager has the SS-600MP
     test.skip(!uiHasSs600mp, 'the installed pve-manager has no SS-600MP profile yet')
     const vmid = Number(await pve.get<string>('/cluster/nextid'))
@@ -1578,11 +1581,14 @@ test.describe('web UI', () => {
     await pickCombo(page, wizard, 'Type', 'Other')
     await next(wizard)
 
-    // System: from the SS-5 PROM, picking SS-600MP goes back to OpenBIOS, its only firmware
+    // System: from the SS-5 PROM, picking SS-600MP goes back to OpenBIOS, its default firmware; a
+    // pve-manager with Sun's 600MP PROM offers that as the only other choice
     await pickCombo(page, wizard, 'BIOS', 'SPARCstation 5 PROM')
     await pickCombo(page, wizard, 'Machine', 'SS-600MP')
     await expect(wizard.getByLabel(fieldLabel('BIOS'))).toHaveValue('Default (OpenBIOS)')
-    expect(await comboOptions(page, wizard, 'BIOS')).toEqual(['Default (OpenBIOS)'])
+    expect(await comboOptions(page, wizard, 'BIOS')).toEqual(
+      uiHasSs600mpProm ? ['Default (OpenBIOS)', 'SPARCserver 600MP PROM'] : ['Default (OpenBIOS)'],
+    )
     await pickCombo(page, wizard, 'Graphic card', 'Serial terminal 0')
     await next(wizard)
 
