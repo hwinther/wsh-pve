@@ -1,8 +1,9 @@
 #!/bin/sh
-# Builds the Windows 98 test programs (w3drun.exe, glidetst.exe, gltest.exe) with Debian's mingw-w64
-# (gcc-mingw-w64-i686) into OUTDIR, without mingw-w64's C runtime (see w3d.h): Windows 4.0
-# subsystem, i686 without SSE (the guest's CPU is a Pentium III; x87 floating point), imports from
-# KERNEL32, USER32 and GDI32 only, which the end of this script checks.
+# Builds the Windows 98 test programs (w3drun.exe, glidetst.exe, gltest.exe, and w3dstrm.exe for
+# e2e/streaming) with Debian's mingw-w64 (gcc-mingw-w64-i686) into OUTDIR, without mingw-w64's C
+# runtime (see w3d.h): Windows 4.0 subsystem, i686 without SSE (the guest's CPU is a Pentium III;
+# x87 floating point), imports from KERNEL32, USER32 and GDI32 only, which the end of this script
+# checks.
 #
 #   e2e/3dfx/win98/build.sh OUTDIR
 set -eu
@@ -12,7 +13,7 @@ scene=$here/../../../packages/wsh-openglide/tests
 CC=${CC:-i686-w64-mingw32-gcc}
 OBJDUMP=${OBJDUMP:-i686-w64-mingw32-objdump}
 mkdir -p "$out"
-for p in w3drun glidetst gltest; do
+for p in w3drun glidetst gltest w3dstrm; do
 	"$CC" -O2 -Wall -Wextra -Wno-unused-parameter -Wno-cast-function-type -march=i686 -mno-sse -mfpmath=387 \
 		-fno-tree-loop-distribute-patterns -fno-stack-protector \
 		-fno-asynchronous-unwind-tables -mno-stack-arg-probe -I"$here" -I"$scene" \
