@@ -13,17 +13,19 @@
 #      with the group wsh-display, with qemu-server's policy (src/usr/dbus-display.conf, taken from
 #      submodules/qemu-server.patch), on /run/wsh-dbus-display/100.sock. The clients run as the
 #      user "streamer", a member of wsh-display, as a streaming server on the node would.
-#   3. For each run in RUNS (default "x86_64 aarch64 x86_64-gl sparc32"): QEMU paused with wisp's
-#      framebuffer kernel (KERNELS/kernel-fb-<arch>, from the wisp-fb release), -display dbus and
-#      the audio driver dbus at 48 kHz, as qemu-server starts it; tests/stream_test.py runs the
-#      pipelines and the bridge and checks the picture, the keyboard, the mouse, the sound and the
-#      end of stream:
+#   3. For each run in RUNS (default "x86_64 aarch64 x86_64-gl x86_64-egl sparc32"): QEMU paused
+#      with wisp's framebuffer kernel (KERNELS/kernel-fb-<arch>, from the wisp-fb release),
+#      -display dbus and the audio driver dbus at 48 kHz, as qemu-server starts it;
+#      tests/stream_test.py runs the pipelines and the bridge and checks the picture, the keyboard,
+#      the mouse, the sound and the end of stream:
 #        x86_64     pc, std VGA, AC97, PS/2 mouse (relative): the picture through the shared map
 #        aarch64    virt, bochs-display, AC97, virtio keyboard and tablet (absolute):
 #                   shared-map=false, so the pixels come in Scanout/Update
 #        x86_64-gl  as x86_64 with qemu-system-x86_64-3dfx and -display dbus,gl=on (Mesa's
 #                   llvmpipe through /dev/udmabuf): the picture as dmabufs, read before each
 #                   UpdateDMABUF is answered; skipped without /dev/udmabuf
+#        x86_64-egl as x86_64-gl, with qemudbussrc dmabuf-import=egl: every dmabuf read through
+#                   EGL (Mesa's software device), the way it reads a GPU's tiled dmabufs
 #        sparc32    SS-5, cg3, CS4231, Sun keyboard and mouse (relative): the shared map
 #   4. An unprivileged container's client: VM 101's bus with 'dbus-display-uids: 100000', set up by
 #      qemu-server's PVE::QemuServer::DBusDisplay (from the patch): qemu-dbus-input, qemudbussrc and
@@ -39,7 +41,7 @@ DEB=${1:?usage: test.sh WSH-GST-QEMU-DBUS-DEB OUTDIR}
 OUT=${2:?usage: test.sh WSH-GST-QEMU-DBUS-DEB OUTDIR}
 SRC=${SRC:-/src}
 KERNELS=${KERNELS:-/kernels}
-RUNS=${RUNS:-x86_64 aarch64 x86_64-gl sparc32}
+RUNS=${RUNS:-x86_64 aarch64 x86_64-gl x86_64-egl sparc32}
 VMID=100
 BUS=/run/wsh-dbus-display/$VMID.sock
 RUN=/run/stream-test
@@ -111,14 +113,16 @@ for run in $RUNS; do
 	expect=map
 	mouse=relative
 	shared=true
+	import=auto
 	case $run in
 	x86_64)
 		arch=x86_64
 		machine="qemu-system-x86_64 -M pc -m 128 -vga std -device AC97,audiodev=snd0"
 		console=ttyS0
 		;;
-	x86_64-gl)
+	x86_64-gl | x86_64-egl)
 		arch=x86_64
+		[ "$run" = x86_64-gl ] || import=egl
 		if [ ! -e /dev/udmabuf ] && ! ls /dev/dri/renderD* > /dev/null 2>&1; then
 			skip "$run: no /dev/udmabuf and no render node (docker run --device /dev/udmabuf)"
 			continue
@@ -164,7 +168,7 @@ for run in $RUNS; do
 	if python3 -I "$SRC/packages/wsh-gst-qemu-dbus/tests/stream_test.py" --arch "$arch" --name "$run" \
 		--serial "$RUN/$run.serial" --qmp "$RUN/$run.qmp" --address "unix:path=$BUS" \
 		--outdir "$OUT/$run" --user "$USER_NAME" --expect "$expect" --mouse "$mouse" \
-		--shared-map "$shared"; then
+		--shared-map "$shared" --dmabuf-import "$import"; then
 		:
 	else
 		failed=1

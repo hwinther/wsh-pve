@@ -7,5 +7,5 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install --no-install-recommends --assume-yes build-essential debhelper dpkg-dev \
        meson ninja-build pkgconf libglib2.0-dev libgstreamer1.0-dev \
-       libgstreamer-plugins-base1.0-dev lintian \
+       libgstreamer-plugins-base1.0-dev libegl-dev libgles-dev lintian \
     && rm -rf /var/lib/apt/lists/*

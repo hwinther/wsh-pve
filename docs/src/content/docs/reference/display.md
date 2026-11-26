@@ -203,13 +203,22 @@ qemu-dbus-input --vmid 130                                                 # inp
   (or, with `shared-map=false`, the pixels in each update). With GL (`mesa-display=dbus`) QEMU hands
   it each frame as a dmabuf; it copies the changed part out and answers at once, since QEMU holds
   the guest's GL frames until the client answers (0.07-0.4 ms on average in the tests, single frames
-  up to 14 ms on a busy host). It reads linear dmabufs only (Mesa's software renderer through `/dev/udmabuf`, which the
-  tests use); a GPU's tiled dmabufs (NVIDIA's) aren't read yet: it warns and drops those frames.
-  The mouse cursor isn't drawn into the picture. When the VM stops it ends the stream (EOS).
+  up to 14 ms on a busy host). A linear dmabuf (Mesa's software renderer through `/dev/udmabuf`) is
+  mapped; a GPU's tiled one (NVIDIA's block-linear) is imported through EGL on the GPU's render
+  node, drawn into a framebuffer and read back (`glReadPixels`, 0.7 ms on average for 1280x800 on a
+  GTX 1080), and the rows are read once more 20 ms later, since NVIDIA's driver doesn't make the
+  read wait for QEMU's drawing (without that the last frame missed rows now and then). The
+  property `dmabuf-import` is `auto` (that), `mmap` (linear only, other frames dropped) or `egl`
+  (all through EGL); `render-node=` picks the GPU when there are several. The element needs the
+  GPU's EGL library where it runs (NVIDIA's, in a container: see [On a node](#on-a-node)). The
+  mouse cursor isn't drawn into the picture. When the VM stops it ends the stream (EOS).
 - **`qemudbusaudiosrc`** gives the guest's playback as raw PCM as QEMU sends it (48 kHz signed
   16-bit stereo with qemu-server's audio driver `dbus`), in 10 ms buffers. QEMU passes the guest
   mixer's volume and mute separately; the element applies them (`apply-volume=false` passes the
-  samples as they are).
+  samples as they are). QEMU sends nothing while the guest plays nothing; the element fills that
+  with silence in real time (`silence=false` doesn't), so the stream has no gaps and its timestamps
+  run on without jumping back: a gap made Wolf's `audiorate` push the whole pause as silence at
+  once when the sound came, and the leaky queue before it dropped the sound's start meanwhile.
 - **`qemu-dbus-input`** reads lines like `key 30 1` (Linux key code, press) and `key 30 0`
   (release), `btn left 1`, `wheel -1`, `rel 10 5` and `abs 640 400` (or `abs X Y W H`, scaled from a
   W x H client window), and sends them to the console's keyboard and mouse. QEMU takes absolute
@@ -220,11 +229,13 @@ qemu-dbus-input --vmid 130                                                 # inp
   ends are released. `man qemu-dbus-input` has the whole protocol.
 - **Tested** (`packages/wsh-gst-qemu-dbus/test.sh`, in CI; TCG, no GPU): wisp's framebuffer
   kernels on x86 (std VGA, PS/2, AC97), on aarch64's virt (virtio tablet, AC97), on the SS-5 (cg3,
-  CS4231, Sun mouse) and on x86 with
-  `dbus,gl=on`: the frame identical to QEMU's screendump, keys in the guest 5 ms after the bridge
-  read them, relative and absolute motion and buttons, a 440 Hz tone of 2.00 s at 440.0 Hz, the end
-  of stream when QEMU quits. Also through PVE (`qm start` of a `display=dbus` and a
-  `mesa-display=dbus` VM).
+  CS4231, Sun mouse) and on x86 with `dbus,gl=on` (the dmabufs mapped, and again through EGL on
+  Mesa's software device): the frame identical to QEMU's screendump, keys in the guest 5 ms after
+  the bridge read them, relative and absolute motion and buttons, a 440 Hz tone of 2.00 s at
+  440.0 Hz without a dropout, the end of stream when QEMU quits. Also through PVE (`qm start` of a
+  `display=dbus` and a `mesa-display=dbus` VM), and on a node with an NVIDIA GPU: a
+  `mesa-display=dbus` VM's block-linear dmabufs through EGL, the frame identical to QEMU's
+  screendump in four runs out of four.
 
 ## Streaming to Moonlight
 
@@ -284,7 +295,10 @@ All checks passed in five runs (QEMU's refresh 30, 16 and 8 ms without GL, 30 an
 | Key: client -> the guest's serial line, median | 1.5 ms | 1.7 ms | 1.3 ms | 1.3 ms | 1.3 ms |
 
 A second series on the same host gave 62, 51 and 54 ms median (30 ms, 8 ms, GL at 30 ms) and the
-same rates within a picture a second. The host was shared with other jobs.
+same rates within a picture a second. The host was shared with other jobs. With the
+wsh-gst-qemu-dbus of the audio fix and the EGL import (built from the branch, `WSH_GST_DEB`), two
+series: 50-52, 53 and 50 ms median at 30, 16 and 8 ms, 54-59 ms with GL at 30 ms, 60-64 ms with
+GL read through EGL (`x86_64-egl`, Mesa's software device), every check passed.
 
 - **Picture**: the decoded frame against QEMU's screendump: mean difference 1.6 of 255 per channel,
   1.4% of the pixels off by more than 48 (the colour edges of 4:2:0 chroma).
@@ -298,10 +312,20 @@ same rates within a picture a second. The host was shared with other jobs.
   them; 0.3 ms of that is the way through Wolf to its virtual keyboard. Absolute positions and
   relative motion add up exactly on the guest's PS/2 mouse (+70, +30 for a position, `move 10 0`
   and a position 60, 30 away).
-- **Sound**: `soundtest 440 2000` in the client's decoded Opus audio: 440.0 Hz, 1.93-1.98 s; the
-  first 50-85 ms after the tone's start were lost (one dropout) in every run with input devices,
-  not in the one run without them, and the first sound reaches the client 90-160 ms after the
-  command was typed.
+- **Sound**: `soundtest 440 2000` in the client's decoded Opus audio: 440.0 Hz, 2.03 s without a
+  dropout, the first sound at the client 38-56 ms after the command was typed. Before the fix in
+  `qemudbusaudiosrc`: 1.93-1.98 s with one dropout of 50-85 ms just after the tone's start in most
+  runs, the first sound 90-160 ms after the command. The cause: the source sent nothing until the
+  guest played, so Wolf's audio pipeline (`queue max-size-buffers=3 leaky=downstream ! audiorate !
+  audioconvert ! opusenc`) got its first buffer at the running time the tone started; `audiorate`
+  filled everything from the stream's start (11-12 s by then) with silence in one go, and while
+  that went through Opus (about 80 ms) the leaky queue dropped the tone's first five 10 ms buffers,
+  which `audiorate` then filled with silence too (its log: offset 573638, then 576038). How long
+  that took grew with the session's length, so it showed in the runs with the input checks (which
+  come before the sound), and only when the host was busy enough (four of seven runs with the old
+  package had no dropout). The client got that silence as one burst (11.6 s of audio at once). Now the
+  source sends silence in real time while the guest plays nothing; the check fails on a dropout
+  inside the tone and when more than 250 ms of audio reach the client at once (5 ms now).
 
 ### On a node
 
@@ -411,6 +435,29 @@ needs the CUDA toolkit's runtime compiler (`libnvrtc`), not part of the driver. 
 gives the apps `nvh264enc` (Wolf's settings: CBR, zero latency, preset p1, ultra-low-latency tune)
 on NV12 in system memory.
 
+**NVIDIA GPU: `dbus,gl=on`.** A VM with `mesa=1,mesa-display=dbus` (the 3dfx binary) hands the
+console to `qemudbussrc` as dmabufs in NVIDIA's block-linear layout (`XB24`, modifier
+`0x300000000cdb014` on the GTX 1080), which it reads through EGL on the render node. The container
+needs `/dev/dri/renderD128` (and `/dev/dri/card0`, `/dev/nvidia0`, `/dev/nvidiactl`, as above) and
+NVIDIA's EGL and GLES libraries with glvnd's vendor file:
+
+```sh
+pct set <ctid> --dev7 /dev/dri/card0
+for l in libEGL_nvidia libGLESv2_nvidia libnvidia-eglcore libnvidia-glsi libnvidia-glcore libnvidia-tls \
+    libnvidia-gpucomp libnvidia-glvkspirv libnvidia-allocator; do
+  pct push <ctid> /usr/lib/x86_64-linux-gnu/$l.so.<version> /usr/lib/x86_64-linux-gnu/$l.so.<version>
+done
+pct exec <ctid> -- mkdir -p /usr/share/glvnd/egl_vendor.d
+pct push <ctid> /usr/share/glvnd/egl_vendor.d/10_nvidia.json /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+pct exec <ctid> -- sh -c 'cd /usr/lib/x86_64-linux-gnu && ln -sf libEGL_nvidia.so.<version> libEGL_nvidia.so.0 &&
+  ln -sf libGLESv2_nvidia.so.<version> libGLESv2_nvidia.so.2 &&
+  ln -sf libnvidia-allocator.so.<version> libnvidia-allocator.so.1 && ldconfig'
+```
+
+`GST_DEBUG=qemudbussrc:4` then logs `dmabufs through EGL device /dev/dri/renderD128, EGL 1.5
+(NVIDIA), GL renderer NVIDIA GeForce GTX 1080/PCIe/SSE2`. Without NVIDIA's EGL in the container
+the element finds no GPU device and warns once that it can't read the console's dmabufs.
+
 **Measured on the node** (TCG guest, wisp's framebuffer kernel at 1280x800, PS/2 mouse; the probe
 client in the container on the loopback, so no network in the numbers; 10 latency samples each):
 
@@ -422,19 +469,30 @@ client in the container on the loopback, so no network in the numbers; 10 latenc
 | Sound: `soundtest 440 2000` | 440.0 Hz, 1.93 s | 440.0 Hz, 1.93 s | 440.0 Hz, 1.93 s |
 
 Every check passed in those three runs (picture against QEMU's screendump, keyboard, mouse,
-sound), with the same dropout just after the tone's start as in the lab. NVENC saved about 4 ms
-of the median against x264. Its CBR stream keeps refining a still picture for a few frames, which the
-probe counts as changes (51 "new" pictures a second at a 30 ms refresh), so its picture rate isn't
-comparable.
+sound), with the same dropout just after the tone's start as in the lab (fixed since, see below).
+NVENC saved about 4 ms of the median against x264. Its CBR stream keeps refining a still picture
+for a few frames, which the probe counts as changes (51 "new" pictures a second at a 30 ms
+refresh), so its picture rate isn't comparable.
 
-**`dbus,gl=on` on the NVIDIA GPU** (`mesa=1,mesa-display=dbus`): QEMU's EGL and GBM work with
-NVIDIA's driver (the 3dfx binary opened the render node and started; the stream ran). But the
-console's dmabufs are NVIDIA's block-linear layout (`XB24`, modifier `0x300000000cdb014`), which
-`qemudbussrc` can't map yet (it reads linear dmabufs only), so it drops every frame and the client
-keeps its first picture. That needs 3c's second slice, an EGL import of tiled dmabufs.
+**With `dbus,gl=on`** (the tiled dmabufs through EGL; pve-qemu-kvm 11.1.3-4+wsh27 on the node, the
+same VM switched between `vga: std,display=dbus` and `vga: std,mesa=1,mesa-display=dbus`, one
+session, refresh 30 ms, every check passed in each run):
+
+| | x264, no GL | x264, GL | NVENC, no GL | NVENC, GL |
+| --- | --- | --- | --- | --- |
+| Guest draws -> decoded at the client, median (min-max) | 53 ms (39-74), 71 ms (48-81) | 89 ms (74-110), 92 ms (77-110), 96 ms (78-111) | 55 ms (36-63) | 77 ms (59-87) |
+| Sound: `soundtest 440 2000` | 440.0 Hz, 2.03 s | 440.0 Hz, 2.03 s | 440.0 Hz, 2.03 s | 440.0 Hz, 2.03 s |
+
+GL costs 22-36 ms of the median here (in the lab, with Mesa's llvmpipe, 5-10 ms). It isn't the
+read: `UpdateDMABUF` is answered in 0.7 ms on average (at most 6-12 ms), the second read 20 ms
+later changed the picture once in about 66 updates, and reading the frames as `BGRx` instead of
+`RGBx` changed nothing. QEMU's updates came 9-27 ms after the guest's report that it drew, as
+without GL; where the rest goes is open.
 
 Not verified yet: an unprivileged container (blocked, see above), a client on another machine over
-the network, a real Moonlight client on a TV or phone, a 3dfx game through it.
+the network, a real Moonlight client on a TV or phone, a 3dfx game or a guest drawing with GL
+through it (the GL runs above have QEMU upload the VGA's picture into a texture; wisp has no GL
+program).
 
 ## VGA retrace
 

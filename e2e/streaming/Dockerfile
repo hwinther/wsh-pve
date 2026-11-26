@@ -10,9 +10,11 @@
 #                (unpinned there) at MDNS_CPP_COMMIT, Boost from its source release (by sha256), and
 #                the interpipe GStreamer elements Wolf's pipelines use at INTERPIPE_COMMIT
 #   node         a PVE node's streaming side in one container: the published pve-qemu-kvm and
-#                wsh-gst-qemu-dbus from the wsh-pve apt repository, dbus-daemon with qemu-server's
-#                bus policy, Wolf, x264 (software encoding), PulseAudio (Wolf won't start without
-#                one), wolf-config.py, wolf-input-bridge, wolf-pair and node.sh as the entry point
+#                wsh-gst-qemu-dbus from the wsh-pve apt repository (or the build of
+#                wsh-gst-qemu-dbus in the context's debs/, from test.sh's WSH_GST_DEB),
+#                dbus-daemon with qemu-server's bus policy, Wolf, x264 (software encoding),
+#                PulseAudio (Wolf won't start without one), wolf-config.py, wolf-input-bridge,
+#                wolf-pair and node.sh as the entry point
 #   client-build moonlight-embedded at MOONLIGHT_COMMIT (its moonlight-common-c submodule as
 #                pinned there) and wsh-moonlight-probe (moonlight-probe.c) on its libraries
 #   client       moonlight-embedded's `moonlight` (pairing), wsh-moonlight-probe and stream3d.py
@@ -120,6 +122,15 @@ RUN apt-get update \
        libegl1 libegl-mesa0 libgl1-mesa-dri python3 curl procps pulseaudio \
        libcurl4t64 libevdev2 libudev1 libpulse0 libunwind8 libdrm2 libpci3 libicu76 libssl3t64 \
     && rm -rf /var/lib/apt/lists/* /tmp/wsh-pve.gpg.key
+# A wsh-gst-qemu-dbus build to test instead of the published one (test.sh: WSH_GST_DEB); debs/
+# is empty otherwise
+COPY debs/ /tmp/debs/
+RUN if ls /tmp/debs/*.deb > /dev/null 2>&1; then \
+       apt-get update && apt-get install --no-install-recommends --assume-yes --allow-downgrades /tmp/debs/*.deb \
+       && rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && rm -rf /tmp/debs \
+    && dpkg-query -W wsh-gst-qemu-dbus
 COPY --from=wolf-build /out/ /
 COPY --from=wolf-build /src/wolf/src/moonlight-server/state/default/config.include.toml /usr/local/share/wolf/
 COPY dbus-display.conf /usr/share/qemu-server/dbus-display.conf
@@ -152,6 +163,14 @@ RUN apt-get update \
        libasound2t64 libsdl2-2.0-0 \
     && rm -rf /var/lib/apt/lists/* /tmp/wsh-pve.gpg.key \
     && groupadd --system wsh-display
+# as in node: a wsh-gst-qemu-dbus build from debs/, if there is one
+COPY debs/ /tmp/debs/
+RUN if ls /tmp/debs/*.deb > /dev/null 2>&1; then \
+       apt-get update && apt-get install --no-install-recommends --assume-yes --allow-downgrades /tmp/debs/*.deb \
+       && rm -rf /var/lib/apt/lists/*; \
+    fi \
+    && rm -rf /tmp/debs \
+    && dpkg-query -W wsh-gst-qemu-dbus
 COPY --from=wolf-build /out/ /
 COPY --from=wolf-build /src/wolf/src/moonlight-server/state/default/config.include.toml /usr/local/share/wolf/
 COPY --from=client-build /out/ /

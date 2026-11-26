@@ -8,9 +8,13 @@ name: Streaming to Moonlight
 # moonlight-embedded's pairing and the probe client in another: pairing, the picture against QEMU's
 # screendump, latency from the guest's draw to the decoded frame, frame pacing against the D-Bus
 # display's refresh, keys and mouse from the client into the guest, a 440 Hz tone in the client's
-# decoded audio. Needs no GPU; the GL run (dbus,gl=on, llvmpipe) uses /dev/udmabuf.
+# decoded audio without a dropout and arriving steadily. Needs no GPU; the GL runs (dbus,gl=on,
+# llvmpipe) use /dev/udmabuf, x86_64-egl reads the dmabufs through EGL as on a GPU node. The
+# wsh-gst-qemu-dbus package is built from the checkout (make wsh-gst-qemu-dbus), so the sources
+# under test are this commit's, not the published ones.
 #
-# Not a required check: it runs for pull requests that change e2e/streaming and by hand.
+# Not a required check: it runs for pull requests that change e2e/streaming or the
+# wsh-gst-qemu-dbus package, and by hand.
 
 on:
   workflow_dispatch:
@@ -18,7 +22,7 @@ on:
       runs:
         description: "RUNS for test.sh (ARCH:REFRESH_MS, spaces or commas)"
         required: false
-        default: "x86_64:30 x86_64:8 x86_64-gl:30"
+        default: "x86_64:30 x86_64:8 x86_64-gl:30 x86_64-egl:30"
       rounds:
         description: "Latency samples per run"
         required: false
@@ -28,6 +32,7 @@ on:
       - main
     paths:
       - "e2e/streaming/**"
+      - "packages/wsh-gst-qemu-dbus/**"
       - ".github/workflows/streaming.yml"
 
 permissions: {}
@@ -48,6 +53,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0 # packages/wsh-gst-qemu-dbus/version.sh counts commits
+
+      - name: Build wsh-gst-qemu-dbus
+        run: make wsh-gst-qemu-dbus DOCKER=docker
 
       # Wolf makes its virtual keyboard and mice through /dev/uinput; the GL run needs /dev/udmabuf
       - name: Kernel modules
@@ -69,9 +78,13 @@ jobs:
 
       - name: Build, stream and measure
         env:
-          RUNS: ${{ inputs.runs || 'x86_64:30 x86_64:8 x86_64-gl:30' }}
+          RUNS: ${{ inputs.runs || 'x86_64:30 x86_64:8 x86_64-gl:30 x86_64-egl:30' }}
           ROUNDS: ${{ inputs.rounds || '10' }}
-        run: sh e2e/streaming/test.sh "$RUNNER_TEMP/out" "$RUNNER_TEMP/kernels"
+        run: |
+          set -euo pipefail
+          WSH_GST_DEB=$(ls build/wsh-gst-qemu-dbus/wsh-gst-qemu-dbus_*_amd64.deb)
+          export WSH_GST_DEB
+          sh e2e/streaming/test.sh "$RUNNER_TEMP/out" "$RUNNER_TEMP/kernels"
 
       - name: Make the results readable
         if: ${{ always() }}

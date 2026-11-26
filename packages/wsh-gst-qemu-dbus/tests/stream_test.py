@@ -14,12 +14,15 @@ then lets the guest boot and checks, each a PASS/FAIL line also listed in OUTDIR
 
   picture   wisp's `fbtest` colour bars in the newest frame match QEMU's screendump
   path      the element got the picture the expected way (pixels, shared map or dmabufs; with
-            dmabufs, how long the replies to UpdateDMABUF took)
+            dmabufs, how long the replies to UpdateDMABUF took, and with --dmabuf-import egl that
+            EGL read them)
   keyboard  keys sent through the bridge reach the guest (`keytest`: evdev codes 30, 48, 1)
   mouse     buttons and motion through the bridge reach the guest (`mousetest`), relative on a
             PS/2 mouse (rel, and abs turned into relative motion), absolute on a virtio tablet
             (abs, and rel moving the bridge's pointer)
   sound     `soundtest 440 MS` in the WAV the audio pipeline wrote: a 440 Hz tone of about MS ms
+            without a dropout (a quiet 10 ms window inside it), after the silence the element
+            outputs while the guest plays nothing
   eos       when QEMU quits, the video pipeline ends by itself (EOS) and exits 0
 
 Also measured (no pass/fail): the time from `fbtest` to the matching frame, and from a line written
@@ -27,8 +30,8 @@ to the bridge to the guest's report of the key.
 
 usage: stream_test.py --arch ARCH --serial SOCK --qmp SOCK --address ADDR --outdir DIR
                       [--user U] [--expect pixels|map|dmabuf] [--mouse relative|absolute]
-                      [--shared-map true|false] [--sound-ms MS] [--skip CHECK,...]
-                      [--start cont|reset]
+                      [--shared-map true|false] [--dmabuf-import auto|mmap|egl]
+                      [--sound-ms MS] [--skip CHECK,...] [--start cont|reset]
 """
 
 import argparse
@@ -198,9 +201,11 @@ def read_wav(path):
     return rate, channels, samples
 
 
-def tone(samples, rate):
-    """(seconds of sound, its frequency, peak) of the loud part; the frequency counts rising edges
-    through a quarter of the peak (hysteresis)."""
+def tone(samples, rate, want):
+    """(seconds of sound, its frequency, peak, dropouts) of the loud part; the frequency counts
+    rising edges through a quarter of the peak (hysteresis) over the tone, the want seconds from
+    its first loud 10 ms window (after it, AC97 may play a few ms of its old buffer); dropouts: runs
+    of quiet windows within the tone"""
     window = max(1, rate // 100)
     loud = []
     for i in range(0, len(samples) - window, window):
@@ -208,8 +213,12 @@ def tone(samples, rate):
         if math.sqrt(sum(s * s for s in chunk) / window) > 1000:
             loud.append(i)
     if not loud:
-        return 0.0, 0.0, max((abs(s) for s in samples), default=0)
-    first, last = loud[0], loud[-1] + window
+        return 0.0, 0.0, max((abs(s) for s in samples), default=0), 0
+    first = loud[0]
+    end = first + int(want * rate) - 3 * window
+    inside = [i for i in loud if i < end]
+    last = inside[-1] + window
+    dropouts = sum(1 for a, b in zip(inside, inside[1:]) if b - a > window)
     part = samples[first:last]
     peak = max(abs(s) for s in part)
     level = peak // 4
@@ -221,7 +230,7 @@ def tone(samples, rate):
             edges += 1
         elif state >= 0 and s < -level:
             state = -1
-    return len(loud) * window / rate, edges / ((last - first) / rate), peak
+    return len(loud) * window / rate, edges / ((last - first) / rate), peak, dropouts
 
 
 def as_user(user, cmd):
@@ -321,6 +330,7 @@ def main():
     ap.add_argument("--expect", choices=("pixels", "map", "dmabuf"), default="map")
     ap.add_argument("--mouse", choices=("relative", "absolute"), default="relative")
     ap.add_argument("--shared-map", default="true")
+    ap.add_argument("--dmabuf-import", choices=("auto", "mmap", "egl"), default="auto")
     ap.add_argument("--sound-ms", type=int, default=2000)
     ap.add_argument("--skip", default="")
     ap.add_argument("--boot-timeout", type=float, default=300)
@@ -337,13 +347,18 @@ def main():
     if args.user:
         subprocess.run(["chown", "-R", args.user, out], check=True)
     prompt = r"wisp:\S+> "
-    env = {**os.environ, "GST_DEBUG": "qemudbussrc:4,qemudbusaudiosrc:4", "GST_DEBUG_NO_COLOR": "1"}
+    # GST_DEBUG adds to the levels the checks read
+    debug = "qemudbussrc:4,qemudbusaudiosrc:4"
+    if os.environ.get("GST_DEBUG"):
+        debug += "," + os.environ["GST_DEBUG"]
+    env = {**os.environ, "GST_DEBUG": debug, "GST_DEBUG_NO_COLOR": "1"}
     procs = []
 
     video_log = f"{out}/video.log"
     video = subprocess.Popen(as_user(args.user, [
         "gst-launch-1.0", "-e", "qemudbussrc", f"address={args.address}",
-        f"shared-map={args.shared_map}", "!", "videoconvert", "!", "video/x-raw,format=RGB", "!",
+        f"shared-map={args.shared_map}", f"dmabuf-import={args.dmabuf_import}", "!",
+        "videoconvert", "!", "video/x-raw,format=RGB", "!",
         "multifilesink", f"location={frames}/f%06d.rgb", "max-files=40"]),
         env=env, stdout=open(video_log, "w"), stderr=subprocess.STDOUT)
     procs.append(video)
@@ -485,10 +500,11 @@ def main():
             stats = wait_log(f"{out}/audio.log", r"stopped: ([^\n]*)", 5)
             try:
                 rate, channels, samples = read_wav(wav)
-                secs, hz, peak = tone(samples, rate)
                 want = args.sound_ms / 1000
-                result("sound", rc == 0 and abs(hz - 440) < 440 * 0.01 and want * 0.9 < secs < want * 1.15,
-                       f"{secs:.2f} s of sound at {hz:.1f} Hz (peak {peak}) in the WAV from"
+                secs, hz, peak, dropouts = tone(samples, rate, want)
+                result("sound", rc == 0 and abs(hz - 440) < 440 * 0.01 and want * 0.9 < secs < want * 1.15
+                       and dropouts == 0,
+                       f"{secs:.2f} s of sound at {hz:.1f} Hz (peak {peak}, {dropouts} dropouts) in the WAV from"
                        f" qemudbusaudiosrc ({rate} Hz, {channels} channels; gst-launch exit {rc};"
                        f" {stats.group(1) if stats else 'no stats'})")
             except (OSError, ValueError) as e:
@@ -512,6 +528,8 @@ def main():
         if args.expect == "dmabuf":
             reply = re.search(r"dmabuf-reply-us=(\d+)/(\d+)", stats)
             ok = counts.get("dmabuf-scanouts", 0) > 0 and counts.get("dmabuf-updates", 0) > 0
+            if args.dmabuf_import == "egl":
+                ok = ok and counts.get("dmabuf-egl-scanouts", 0) == counts.get("dmabuf-scanouts", 0)
             detail = f"dmabufs ({stats})"
             if reply:
                 detail += f"; UpdateDMABUF answered in {int(reply.group(1))} us on average, {int(reply.group(2))} us at most"

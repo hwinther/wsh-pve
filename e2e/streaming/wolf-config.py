@@ -23,6 +23,7 @@ Each app:
   - runner: wolf-input-bridge for the same bus (Moonlight's keyboard and mouse into the guest),
     started with the session and stopped with it (with --log $BRIDGE_LOG if that is set)
   - H264_ENCODER=nvenc: nvh264enc instead of the encoder Wolf picks (x264enc without a GPU)
+  - SRC_PROPS: more properties for qemudbussrc (e.g. render-node=/dev/dri/renderD128)
   - start_virtual_compositor and start_audio_server off: no Wayland compositor and no PulseAudio
 """
 
@@ -110,6 +111,7 @@ def main():
     ]
     log = f" --log {os.environ['BRIDGE_LOG']}" if os.environ.get("BRIDGE_LOG") else ""
     encoder = os.environ.get("H264_ENCODER", "auto")
+    src_props = f" {os.environ['SRC_PROPS']}" if os.environ.get("SRC_PROPS") else ""
     if encoder != "auto" and encoder not in H264:
         print(f"H264_ENCODER={encoder}: auto or one of {', '.join(H264)}", file=sys.stderr)
         return 2
@@ -130,7 +132,7 @@ def main():
             f"run_cmd = {toml_str('wolf-input-bridge --address ' + address + log)}",
             "",
             "[profiles.apps.video]",
-            f"source = {toml_str('qemudbussrc address=' + address + ' ! ' + REPEAT)}",
+            f"source = {toml_str('qemudbussrc address=' + address + src_props + ' ! ' + REPEAT)}",
             # x264enc takes I420, nvh264enc NV12 (or RGB) in system memory
             f"video_params = {toml_str(VIDEO_PARAMS % ('NV12' if encoder == 'nvenc' else 'I420'))}",
             *([f"h264_encoder = {toml_str(H264[encoder])}"] if encoder != "auto" else []),
