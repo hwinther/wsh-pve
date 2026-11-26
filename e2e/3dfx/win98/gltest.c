@@ -16,7 +16,7 @@
  *
  *   OPENGL: PASS | OPENGL: FAIL <n> | OPENGL: ERROR <what>, then OPENGL: CLOSED
  *
- * With ctx2=1 (the harness's test opengl-ctx, tag GLCTX) it first does what Return Fire 2 does when
+ * With ctx2=1 (the harness's test opengl-ctx, tag GLCTX) it first does what a 1997 OpenGL game does when
  * it goes from its intro to the game: a second wglCreateContext while the first context is current,
  * wglMakeCurrent of the new one and wglDeleteContext of the old one. Then it checks the pixel-store
  * state a new context has (glGetIntegerv of GL_UNPACK_ALIGNMENT and the rest, with the outputs
@@ -130,7 +130,7 @@ static uint8_t read_px(int x, int y, int c)
 	return pixels[((H - 1 - y) * W + x) * 4 + c]; /* GL rows go bottom up */
 }
 
-/* What a game's switch from one context to another (Return Fire 2's, from its intro to the game)
+/* What a game's switch from one context to another (a 1997 OpenGL game's, from its intro to the game)
  * does: a second context while the first one is current, made current, the first one deleted.
  * Windows gives the new context; a wrapper that returned NULL left the game without one. */
 static int context_switch(void)

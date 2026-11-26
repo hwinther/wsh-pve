@@ -7,7 +7,7 @@ Open Watcom (the OVL). Applied by `make 3dfx-drivers`, which reverts it afterwar
 result with scripts/check-3dfx-drivers-isa.sh.
 
 The OpenGL wrapper (opengl32.dll) also gives a game a context when it creates a second one while
-its first is current (Return Fire 2 does, going from its intro to the game: create, make current,
+its first is current (a 1997 OpenGL game does, going from its intro to the game: create, make current,
 delete the old one). Upstream's wglCreateContext returned NULL then, after telling the host, which
 unbinds its context; the game went on without a context, its glGetIntegerv calls wrote nothing and
 Windows' GLU32.DLL divided by an unset GL_UNPACK_ALIGNMENT in gluBuild2DMipmaps (a divide error).

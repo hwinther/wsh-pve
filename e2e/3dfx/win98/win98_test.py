@@ -76,7 +76,7 @@ TESTS = {
     "glide3": ("GLIDE3", "GLIDETST.EXE", "glide3"),
     "opengl": ("OPENGL", "GLTEST.EXE", ""),
     # a second context while the first is current, the first deleted, then the pixel-store state and
-    # Windows' GLU32.DLL gluBuild2DMipmaps (Return Fire 2's switch from its intro to the game)
+    # Windows' GLU32.DLL gluBuild2DMipmaps (a 1997 OpenGL game's switch from its intro to the game)
     "opengl-ctx": ("GLCTX", "GLTEST.EXE", "ctx2=1"),
     # the demo (e2e/3dfx/demo, WSHDEMO.EXE -check -bench N -hold S), optional: --tests demo-glide2,...
     "demo-glide2": ("DEMOG2", "WSHDEMO.EXE", "-api glide2 -tag DEMOG2"),
