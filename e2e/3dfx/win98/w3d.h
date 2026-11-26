@@ -72,6 +72,10 @@ size_t strlen(const char *s)
 
 static const char *w3d_tag = "W3D";
 static const char *w3d_log_path = W3D_LOG;
+/* GENERIC_WRITE; a program that also reads commands from the host sets GENERIC_READ too */
+static DWORD w3d_com_access = GENERIC_WRITE;
+/* how long the open may take before the port is given up (a program that needs COM1 waits longer) */
+static DWORD w3d_com_open_ms = 200;
 static HANDLE w3d_com = INVALID_HANDLE_VALUE;
 static HANDLE w3d_com_ev;
 static int w3d_com_off;
@@ -131,7 +135,7 @@ static void w3d_abandon_com(HANDLE h)
 static DWORD WINAPI w3d_open_thread(LPVOID arg)
 {
 	(void)arg;
-	HANDLE h = CreateFileA("COM1", GENERIC_WRITE, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+	HANDLE h = CreateFileA("COM1", w3d_com_access, 0, NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
 	DWORD err = GetLastError();
 	w3d_oc.h = h;
 	w3d_oc.err = err;
@@ -157,7 +161,7 @@ static HANDLE w3d_com_open(void)
 		w3d_com_off = 1;
 		return INVALID_HANDLE_VALUE;
 	}
-	WaitForSingleObject(th, 200);
+	WaitForSingleObject(th, w3d_com_open_ms);
 	if (w3d_xchg(&w3d_oc.state, 2) != 1) {
 		CloseHandle(th);
 		w3d_com_off = 1;

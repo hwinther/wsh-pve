@@ -368,7 +368,10 @@ pct exec <ctid> -- wolf-start <vmid>              # PulseAudio, Wolf, the app "w
   client's keys. The node's real keyboard and mouse are visible in the container too (it is
   privileged); the bridge takes only Wolf's devices.
 - When a Moonlight client pairs, it shows a PIN: `pct exec <ctid> -- wolf-pair <pin>`. Running
-  `wolf-start` again (other VMs, another encoder) keeps the paired clients.
+  `wolf-start` again (other VMs, another encoder) keeps the paired clients. `pct exec` passes the
+  node shell's environment on (`XDG_RUNTIME_DIR=/run/user/0` among it); `wolf-start` and
+  `wolf-pair` use `/run/wolf` whatever it says, and `pct exec <ctid> -- env -i
+  HOME=/root PATH=/usr/local/bin:/usr/bin:/bin ...` keeps the rest out.
 - Moonlight reaches Wolf on TCP 47984, 47989 and 48010 and UDP 47999, 48100 and 48200 of the
   container's address.
 
@@ -409,10 +412,33 @@ pct exec <ctid> -- wolf-start <vmid>
   after the VM stops (`userdel wsh-display-<uid>` removes it); it lets that uid be named, nothing
   more (dbus-daemons accept a uid only with a user). The ACL entry goes when no running VM names
   the uid.
-- **Not tested on a node yet**: the input. Wolf's virtual keyboard and mice appear in the node's
-  `/dev/input` as `root:input 0660`, which the container's root can't open, so `wolf-input-bridge`
-  needs those devices given to the container (a udev rule on the node, for example); the picture
-  and the sound need only the bus.
+- **A uid range of its own** (`lxc.idmap: u 0 300000 65536` and `g 0 300000 65536`, with
+  `root:300000:65536` in `/etc/subuid` and `/etc/subgid`): `pct create` unpacks the template with
+  PVE's default mapping (owners 100000 and up) before the `lxc.idmap` lines are in the
+  configuration, so the container then fails to start (`Permission denied` creating its mount
+  points). Shift the owners once before the first start: `pct mount <ctid>`, add 200000 to every
+  uid and gid from 100000 to 165535 under `/var/lib/lxc/<ctid>/rootfs` (keeping the modes:
+  `chown` clears set-uid bits), `pct unmount <ctid>`. Then `dbus-display-uids 300000`.
+- **Input needs the node's help.** Tried on the node (a range of its own, as above): the
+  container's root opens `/dev/uinput` (PVE makes the node `root:root 0660` inside) and creates
+  devices, but the event devices they become appear in the node's `/dev/input` as
+  `root:input 0660`, which the bind mount shows the container as `nobody:nogroup`: opening
+  them is refused (`EACCES`), so `wolf-input-bridge` gets nothing. In a privileged container the
+  same device opens. A udev rule on the node that gives Wolf's devices (all named `Wolf ...`) to
+  the container's root, and keeps the node's desktop off them, makes them usable (checked with
+  `udevadm verify`, not installed in the test):
+
+  ```text
+  # /etc/udev/rules.d/90-wsh-wolf-uinput.rules (300000: the container's root on the node)
+  SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="Wolf *", OWNER="300000", GROUP="300000", MODE="0660", ENV{LIBINPUT_IGNORE_DEVICE}="1"
+  ```
+
+  Any process on the node that may write `/dev/uinput` can make a device with such a name, which
+  then goes to that uid; mapping the node's `input` group into the container instead would hand
+  it every input device of the node, its real keyboard included.
+- **Without `dbus-display-uids`** (a qemu-server older than the option, as on the test node):
+  Wolf starts in the unprivileged container, but `qemudbussrc` can't reach the socket
+  (`Could not connect: Permission denied` on `/run/wsh-dbus-display`, `root:wsh-display 0750`).
 
 **NVIDIA GPU: NVENC.** Add the GPU's devices and NVIDIA's libraries of the node's driver version
 (here installed with NVIDIA's installer, not packages; copy them from the node), then start Wolf
@@ -489,10 +515,112 @@ later changed the picture once in about 66 updates, and reading the frames as `B
 `RGBx` changed nothing. QEMU's updates came 9-27 ms after the guest's report that it drew, as
 without GL; where the rest goes is open.
 
-Not verified yet: an unprivileged container (blocked, see above), a client on another machine over
-the network, a real Moonlight client on a TV or phone, a 3dfx game or a guest drawing with GL
-through it (the GL runs above have QEMU upload the VGA's picture into a texture; wisp has no GL
-program).
+Not verified yet: the unprivileged container end to end (see above), a client on another machine
+over the network, a real Moonlight client on a TV or phone. A Glide guest: below.
+
+### A Windows 98 guest with Glide
+
+Stage 3f: a Windows 98 SE VM drawing through Glide (qemu-3dfx), streamed through Wolf in the
+privileged container above, with `e2e/streaming/stream3dfx.py` measuring. No game is needed: the
+guest runs `w3dstrm.exe` (`e2e/3dfx/win98/w3dstrm.c`, built with the other Windows 98 test programs
+by `e2e/3dfx/win98/build.sh`), a Glide program that takes commands on COM1 and animates at 60
+frames a second: a white bar moving across the 640x480 picture and, in its bottom tenth, eight
+cells with the frame number's low eight bits (white 1, black 0), where the probe client reads its
+eight points. It reports every swap on COM1 (`F <frame> <ms>`), so each decoded frame at the
+client says which guest frame it shows and the serial line says when the guest swapped it; that
+gives the latency of every guest frame that reaches the client, and the pacing. B held down shows
+colour bars instead (input to picture); keys and the mouse are reported as the program's window
+gets them; `tone HZ MS` plays through WinMM; `run S PROGRAM` starts another program from
+`C:\WIN3DFX` (the demos: `WSHDEMO.EXE`, `WSHSPACE.EXE`).
+
+**The VM.** The guest's disk is the operator's own installed Windows 98 SE (a full clone of one; no
+Windows file is in wsh-pve). With the VM stopped, put on its FAT partition (mtools, from the
+streaming container with the image's directory bind-mounted, or anywhere else) qemu-3dfx's guest
+drivers of the node's revision (`qemu-system-x86_64-3dfx --version` names it; the
+`qemu-3dfx-drivers-<rev>` release: `FXMEMMAP.VXD`, `GLIDE.DLL`, `GLIDE2X.DLL`, `GLIDE3X.DLL` in
+`C:\WINDOWS\SYSTEM`, `GLIDE2X.OVL` in `C:\WINDOWS`), `W3DSTRM.EXE`, `WSHDEMO.EXE` and
+`WSHSPACE.EXE` in `C:\WIN3DFX`, and `W3DSTRM.EXE` once more in the Start menu's StartUp folder.
+Then, on the node:
+
+```sh
+qm set <vmid> --vga std,memory=128,mesa=1,mesa-display=dbus --audio0 device=AC97,driver=dbus \
+  --serial0 socket                       # or std,memory=128,mesa=1,display=dbus: Glide read back, no GL
+qm start <vmid>
+pct exec <ctid> -- env -i HOME=/root PATH=/usr/local/bin:/usr/bin:/bin H264_ENCODER=nvenc wolf-start <vmid>
+python3 stream3dfx.py --node 127.0.0.1 --keydir /root/.cache/moonlight --app wsh-vm-<vmid> \
+  --outdir <dir>/<name> --probe-outdir /shared/<name> --shared <dir> \
+  --serial unix:/var/run/qemu-server/<vmid>.serial0 --qmp unix:/var/run/qemu-server/<vmid>.qmp \
+  --probe-prefix "pct exec <ctid> -- env -i HOME=/root PATH=/usr/local/bin:/usr/bin:/bin" \
+  --enter-after 45 --demo
+```
+
+`stream3dfx.py` and `stream3d.py` (it imports it) run on the node, where the VM's serial socket
+and QMP are; `<dir>` is bind-mounted into the container at `/shared` (the probe writes its frames
+and the client's sound there). The probe is paired in the container, on the loopback (`moonlight
+pair -pin <pin> 127.0.0.1` there, then `wolf-pair <pin>`). `--enter-after` presses Enter in the
+guest while `w3dstrm.exe` doesn't answer: the clone stopped at Windows' network logon dialog at
+every boot, and at the first boot with these devices at two new-hardware wizards (the PCI bridge
+and AC97 at its new address), which Enter took through. `--api glide3` uses Glide 3.
+`--tap-address unix:path=/srv/wsh-dbus-display/<vmid>.sock` adds a second listener in the
+container during the latency seconds, which splits the latency at `qemudbussrc`.
+
+**A mode change and Wolf's compositor.** The first runs showed the 640x480 Glide picture unscaled in
+the top left corner of the client's 1280x800, on a checkerboard: the `compositor` that repeats the
+newest picture keeps the size it negotiated first (the 1280x1024 desktop) and draws a smaller input
+as it is. `wolf-config.py` now scales the picture to the client's size before the compositor
+(stretched, as before) and gives the compositor a black background.
+
+**Measured on the node** (the GTX 1080 node above; KVM, `cpu: pentium3`, 512 MB; Windows' desktop
+1280x1024, the Glide window 640x480; the probe in the container on the loopback, H.264 1280x800 at
+60 frames/s; 10 s of animation per run, 570-650 latency samples each; every check passed except
+the sound, see below):
+
+| | read back, x264 | read back, NVENC | GL, x264 | GL, NVENC |
+| --- | --- | --- | --- | --- |
+| Guest swap -> decoded at the client, median (min-max) | 25.7 ms (21.9-35.0); Glide 3: 25.5 ms (22.0-32.9) | 23.6 ms (20.5-28.2) | 28.6 ms (23.6-37.8); 33.1 ms (22.6-46.7) with the second listener | 24.9 ms (20.5-30.9), with the second listener |
+| Guest swap -> `qemudbussrc` (the second listener), median | 0.7 ms | | 2.6 ms | 2.0 ms |
+| New guest frames per second at the client (the guest: 60) | 59.9 | 60.0 | 59.2; 58.8 | 60.1 |
+| Interval between new pictures, stdev | 2.1 ms | 1.8 ms | 2.7 ms; 7.3 ms | 1.8 ms |
+| Key B -> the program's `WM_KEYDOWN`, median | 4.0 ms | 2.9 ms | 3.3-3.9 ms | 3.6 ms |
+| Key B held -> the bars decoded at the client (input to picture), median | 39.7 ms | 41.7 ms | 41.5-43.8 ms | 40.1 ms |
+
+- **Picture**: a still frame decoded at the client against the frame `w3dstrm.exe` drew (its known
+  content, scaled to 1280x800): mean difference 2.3/255, 0.23-0.26% of the pixels off by more than
+  48; against QEMU's screendump (read back only) 1.1/255. With GL, QEMU's screendump has no
+  surface (`no surface`: the console scans a dmabuf out and no VNC client makes QEMU read it back),
+  so the known frame is the reference there.
+- **Latency**: from the guest's swap (its `F` line on the serial line) to the first decoded frame
+  that shows that frame number. Glide frames go out at each swap, not at QEMU's refresh: they reach
+  `qemudbussrc` 0.7 ms (read back) or 2.0-2.6 ms (GL, through EGL) after the swap. The rest, 23-30
+  ms, is the compositor's next tick, the encoder, the loopback and the client's decode. That is
+  half of wisp's 47-55 ms, whose VGA drawing waits for QEMU's refresh.
+- **Where GL's cost went in stage 3e**: here `dbus,gl=on` adds 2-5 ms over the read back, not the
+  22-36 ms of wisp's VGA picture. The EGL import and the read are the same, so the cost sits on
+  the VGA path: with GL, QEMU uploads the VGA surface into a texture at the display refresh and
+  hands that over, and NVIDIA's driver doesn't make the read wait for the upload, so a first read
+  that misses it shows only in the read 20 ms later (in a Glide run 168 of 3488 second reads
+  changed the picture, about 5%; a Glide frame read too early is replaced by the next swap 17 ms
+  later anyway). Not measured on the VGA path itself: a fence from QEMU, or a read once the upload
+  is done, would show whether that is all of it.
+- **Pacing**: the guest's 60 swaps a second reach the client as 58.8-60.1 new pictures a second
+  out of 60 frames; with NVENC every guest frame arrived and the intervals spread by 1.8 ms
+  (stdev), with x264 a few frames were skipped (one guest frame in 40-80) and the spread was 2-7
+  ms. The demos, unpaced: `WSHDEMO.EXE` (tunnel) at 90 frames/s in the guest (median of its FPS
+  lines) gave the client a new picture in each of its 60 frames (stdev 4.8 ms); `WSHSPACE.EXE
+  -auto` at 23-103 frames/s (median 60) gave 42 new pictures a second (stdev 9.1 ms).
+- **Keyboard and mouse**: A, B, Z arrive as virtual keys 65, 66, 90 with scan codes 30, 48, 44,
+  down and up, 2.9-4.0 ms after the client sent them. The VM's USB tablet takes absolute positions
+  exactly (the client's centre is 639,511 of Windows' 1280x1024; +60,+30 on 1280x800 lands at
+  699,550). Relative motion is moved in the console's pixels, which are the Glide window's
+  640x480 while a game runs: `move 10 0` moved Windows' pointer by 20 and `move 0 10` by 21. The
+  buttons reach the program 8-18 ms after the client.
+- **Sound: not working in this guest.** `tone 440 2000` (one 2 s `waveOutWrite` at 22050 Hz) came
+  back as done after 0.34 s and QEMU's audio stream carried 0.2-0.3 s of it before the guest
+  disabled the stream; `WSHSPACE.EXE -audiotest` (WinMM, queued buffers) never finished. QEMU's
+  writes came every 10 ms in real time while the guest played, so the D-Bus audio path isn't the
+  cause; it was the same with AC97 on bus 0 instead of behind PVE's PCI bridge, and without the
+  USB tablet on its interrupt. The guest's driver is SigmaTel's AC97 driver; another driver is
+  left to try.
 
 ## VGA retrace
 

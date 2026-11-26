@@ -15,9 +15,10 @@ the profiles are replaced by one profile, the one Moonlight clients see, with an
 The clients Wolf paired (its [[paired_clients]] in an existing OUT) are kept.
 
 Each app:
-  - video: qemudbussrc (the console as raw video), a compositor that repeats the newest picture
+  - video: qemudbussrc (the console as raw video), scaled to the client's size (stretched, so
+    a guest's mode changes fill the picture), a compositor that repeats the newest picture
     at the client's frame rate (qemudbussrc sends a buffer per change), then Wolf's software
-    path: scaled to the client's size,
+    path:
     I420, the client's colour settings, then the encoder Wolf picked (x264enc without a GPU)
   - audio: qemudbusaudiosrc (the guest's -audiodev dbus playback, 48 kHz stereo)
   - runner: wolf-input-bridge for the same bus (Moonlight's keyboard and mouse into the guest),
@@ -33,8 +34,14 @@ import tomllib
 
 # qemudbussrc sends a buffer per change of the picture and nothing while it stands still, but
 # Moonlight ends a session that gets no video for 10 s (and videorate only lets a buffer go once
-# the next one comes): a live compositor puts out the newest picture at the client's frame rate
-REPEAT = "compositor ! video/x-raw, framerate={fps}/1"
+# the next one comes): a live compositor puts out the newest picture at the client's frame rate.
+# The picture is scaled to the client's size before it: the compositor keeps the output size it
+# negotiated first and draws a smaller picture after a mode change (a Glide game's 640x480 after
+# a 1280x1024 desktop) unscaled in its top left corner, on its checkerboard
+REPEAT = (
+    "videoscale add-borders=false ! video/x-raw, width={width}, height={height}, pixel-aspect-ratio=1/1"
+    " ! compositor background=black ! video/x-raw, framerate={fps}/1"
+)
 
 # H264_ENCODER=nvenc: NVIDIA's encoder for these apps, on system-memory NV12. Wolf's
 # own NVENC pipeline isn't picked without cudaconvertscale, which needs the CUDA toolkit's runtime

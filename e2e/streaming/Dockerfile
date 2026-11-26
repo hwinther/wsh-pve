@@ -174,5 +174,5 @@ RUN if ls /tmp/debs/*.deb > /dev/null 2>&1; then \
 COPY --from=wolf-build /out/ /
 COPY --from=wolf-build /src/wolf/src/moonlight-server/state/default/config.include.toml /usr/local/share/wolf/
 COPY --from=client-build /out/ /
-COPY --chmod=0755 wolf-input-bridge wolf-config.py wolf-pair wolf-start stream3d.py /usr/local/bin/
+COPY --chmod=0755 wolf-input-bridge wolf-config.py wolf-pair wolf-start stream3d.py stream3dfx.py /usr/local/bin/
 RUN ldconfig && ! ldd /usr/local/bin/wolf /usr/local/bin/wsh-moonlight-probe | grep "not found"

@@ -5,7 +5,9 @@
 set -eu
 PIN=${1:?usage: wolf-pair PIN [SECONDS]}
 SECS=${2:-60}
-SOCK=${WOLF_SOCKET_PATH:-${XDG_RUNTIME_DIR:-/run/wolf}/wolf.sock}
+# wolf-start's socket: /run/wolf, not the caller's XDG_RUNTIME_DIR (`pct exec` passes the node
+# shell's /run/user/0 on, where there is no Wolf)
+SOCK=${WOLF_SOCKET_PATH:-/run/wolf/wolf.sock}
 i=0
 while :; do
 	secret=$(curl -fsS --unix-socket "$SOCK" http://localhost/api/v1/pair/pending 2> /dev/null |
