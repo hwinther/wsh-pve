@@ -8,6 +8,7 @@ import {
   qemuAccepts,
   qemuHasDbusRefresh,
   qemuServerHasDbusDisplay,
+  qemuServerHasDbusDisplayUids,
   showcmd,
   vmConfFile,
 } from './_pve'
@@ -170,4 +171,45 @@ test('a started VM gets its own bus; VNC stays; the bus goes with the VM', async
     .toMatch(/inactive|failed/)
   r = await sh(`test -e ${sock}`)
   expect(r.code).not.toBe(0)
+})
+
+// dbus-display-uids: a host uid (an unprivileged container's root, 100000) gets onto this VM's bus
+// and no other's. qemu-server writes the VM's bus configuration, gives the uid a user if it has none
+// and an ACL entry on the socket directory while the VM runs. A process on the node with that uid
+// is what the bus sees of the container's root, so setpriv stands in for the container here.
+test("dbus-display-uids lets a container's uid onto that VM's bus, not others'", async () => {
+  test.skip(!(await qemuServerHasDbusDisplayUids()), 'the installed qemu-server has no dbus-display-uids yet')
+  const params = { 'dbus-display-uids': '100000', memory: 256, name: 'x86-dbus-uids' }
+  const refused = await pve.refused('POST', `/nodes/${NODE}/qemu`, { ...params, vga: 'std', vmid: 9397 })
+  expect(refused.message).toContain("dbus-display-uids needs the D-Bus display (vga: 'display=dbus')")
+
+  const vmid = await createVm({ ...params, vga: 'std,display=dbus' })
+  const other = await createVm({ memory: 256, name: 'x86-dbus-other', vga: 'std,display=dbus' })
+  const sh = (script: string) => pveExec(['sh', '-c', script])
+  const asUid = (uid: number, sock: string) =>
+    sh(`setpriv --reuid=${uid} --regid=65534 --clear-groups busctl --address=unix:path=${sock} tree org.qemu`)
+  for (const id of [vmid, other]) {
+    const r = await pveExec(['qm', 'start', String(id)])
+    expect(r.code, r.output).toBe(0)
+  }
+  let r = await sh(`cat /run/qemu-server/${vmid}.dbus-display.conf`)
+  expect(r.output).toContain('<allow user="100000"/>')
+  r = await sh('getent passwd 100000')
+  expect(r.code, r.output).toBe(0)
+  r = await sh('getfacl --numeric /run/wsh-dbus-display')
+  expect(r.output).toContain('user:100000:--x')
+
+  await expect
+    .poll(async () => (await asUid(100000, `/run/wsh-dbus-display/${vmid}.sock`)).output, { timeout: 15_000 })
+    .toContain('/org/qemu/Display1/Console_0')
+  r = await asUid(100000, `/run/wsh-dbus-display/${other}.sock`)
+  expect(r.code, r.output).not.toBe(0)
+  r = await asUid(100001, `/run/wsh-dbus-display/${vmid}.sock`)
+  expect(r.code, r.output).not.toBe(0)
+
+  r = await pveExec(['qm', 'stop', String(vmid)])
+  expect(r.code, r.output).toBe(0)
+  await expect
+    .poll(async () => (await sh('getfacl --numeric /run/wsh-dbus-display')).output)
+    .not.toContain('user:100000:')
 })

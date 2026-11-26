@@ -60,9 +60,12 @@ qemudbus_connect (const gchar * address, guint timeout_ms, GCancellable * cancel
   GDBusConnection *bus;
   gint64 deadline = g_get_monotonic_time () + (gint64) timeout_ms * 1000;
 
+  /* CROSS_NAMESPACE: AUTH EXTERNAL without a uid, so the bus takes the one the kernel gives it.
+   * In an unprivileged container the uid we see (0) isn't the one the bus sees (100000). */
   bus = g_dbus_connection_new_for_address_sync (address,
       G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-      G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION, NULL, cancellable, error);
+      G_DBUS_CONNECTION_FLAGS_MESSAGE_BUS_CONNECTION |
+      G_DBUS_CONNECTION_FLAGS_CROSS_NAMESPACE, NULL, cancellable, error);
   if (!bus)
     return NULL;
   /* QEMU may still be starting (qemu-server starts the bus first) */
@@ -212,9 +215,11 @@ peer_setup (QemuDBusPeer * peer)
   }
   stream = g_socket_connection_factory_create_connection (sock);
   g_object_unref (sock);
+  /* QEMU authenticates this end as the bus does the other (CROSS_NAMESPACE: see qemudbus_connect) */
   g_dbus_connection_new (G_IO_STREAM (stream), NULL,
       G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT |
-      G_DBUS_CONNECTION_FLAGS_DELAY_MESSAGE_PROCESSING, NULL, peer->cancellable,
+      G_DBUS_CONNECTION_FLAGS_DELAY_MESSAGE_PROCESSING |
+      G_DBUS_CONNECTION_FLAGS_CROSS_NAMESPACE, NULL, peer->cancellable,
       peer_connected, peer);
   g_object_unref (stream);
 
