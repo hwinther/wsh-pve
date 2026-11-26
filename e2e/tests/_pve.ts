@@ -184,6 +184,14 @@ export async function qemuServerHasDbusDisplay(): Promise<boolean> {
 }
 
 /**
+ * Whether the installed qemu-server has the VM option dbus-display-uids (more uids on a VM's
+ * D-Bus display bus, for an unprivileged container). TODO: remove with the skip once published.
+ */
+export async function qemuServerHasDbusDisplayUids(): Promise<boolean> {
+  return installedHas('/usr/share/perl5/PVE/QemuServer/DBusDisplay.pm', 'dbus-display-uids')
+}
+
+/**
  * Whether the installed pve-manager has the "D-Bus display" field in the Display dialog.
  * TODO: remove with the skips once a pve-manager with it is published.
  */

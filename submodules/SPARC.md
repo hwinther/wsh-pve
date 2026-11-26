@@ -141,6 +141,9 @@ maintains the patches.
 | `0156-tests-qtest-test-the-SS-600MP-VMEbus-control-registe` | `sun4m-ss600mp-test` case `vme-regs` for 0155: the `sun-vme` region at priority 0, bits 31-28 of a walking one and of all ones, SunOS's slave enable bit, 0 after a system reset, the fault registers 0; fails without 0155 | ours | not in QEMU |
 | `0157-hw-net-lance-keep-two-bits-of-the-SS-600MP-lance-s-r` | The PROM's lance test (progress `0xc1`) writes a walking one and all ones to the register address port and wants bits 1-0 back, as on the Am7990 (four CSRs); the PCnet core behind QEMU's lance keeps bits 6-0. New lance property `rap-mask` (default `0x7f`) and hwdef field `le_rap_mask`, `0x3` on the SS-600MP only; the drivers select only CSR0-CSR3 either way; no new state | ours | not reported |
 | `0158-tests-qtest-test-the-SS-600MP-lance-s-register-addre` | `sun4m-ss600mp-test` case `lance-rap` for 0157 (bits 1-0 on SS-600MP, RAP 5 selects CSR1, bits 6-0 on SS-10); `lance-in-lebuffer` no longer reads the station address from CSR12-14, which the two-bit port doesn't reach, its transmit from the buffer still shows the init block came from there; 5 cases | ours | not in QEMU |
+| `0159-target-sparc-let-a-SuperSPARC-load-bus-error-trap-wi` | The PROM's lance register size check (progress `0xc1`) loads a byte, a word and a doubleword at the power-of-two offsets 1-`0x800` of the lance's page through the MMU bypass ASI with the MMU off and wants each to take a data access exception (trap 9) with SFSR `0x436` (bus error bit 10, SunOS's `MMU_SFSR_BE`; supervisor load, FT 5, FAV) and the SFAR; QEMU took no trap for a bus error with the MMU off, and trap 0x29 without bit 10 through the bypass ASIs. New CPU feature `buserr-trap`, on no CPU model (the machine sets it): a failed load traps as a data access exception with the MMU on or off, through the bypass ASIs too, with bit 10 in the SFSR (its memory probe expects the same traps on empty banks); a failed store goes to a board hook (`SPARCCPU` `store_error`, under the BQL) and records nothing in the CPU when the board takes it; a failed access that doesn't trap leaves the SFSR and SFAR alone (an earlier write to a board register QEMU lacks at `0xf.0080_0200` had left FT 5, and the first lance fault read `0x437`, overwrite set); in boot mode fetch and data TLB entries are kept apart (a fetch from the trap table's page let the probe of memory bank 15, `0x0f000_0000`, read the PROM, and a fetch after a load from that page ran the bus's zeros: `Trap 0x02` in error mode). Trace event `sparc_bus_error_load_trap`; no new state ("Sun's own SS-600MP boot PROM") | ours | not reported |
+| `0160-hw-sparc-sun4m-report-SS-600MP-SBus-store-errors-as` | The same check then stores at those offsets and wants each store to come back as an M-to-S write error: a level 15 interrupt (trap 0x1f) and, in the IOMMU's AFSR and AFAR (`0xf.e000_1000`, `1004`), error and SBus error-acknowledge bits, transaction size, supervisor, module ID, address bits 4-0, SBus size and PA bits 35-32 (SunOS's `async.h`, `MTSAFSR_*`; `0x9180120e` for a byte at `0xe.f006_0001` from CPU 0) and the address. New `sun4m_iommu_cpu_write_error()` (a second error only sets ME) and hwdef field `sbus_bus_errors`, set on the SS-600MP only: it sets `buserr-trap` on the CPUs and hooks their failed stores to physical `0xe.xxxx_xxxx` to it. The IOMMU's interrupt stays on system interrupt bit 30 (the board has M-to-S write errors on bit 29); no new state | ours | not reported |
+| `0161-tests-qtest-test-SS-600MP-bus-errors-with-the-MMU-of` | qtest `sun4m-sbus-error-test` for 0159-0160: a PROM built by the test, in boot mode with the MMU off and its trap table in the PROM, makes one access: on the SS-600MP a bypass byte load from the lance's page and a load from empty memory trap 9 with SFSR `0x436` and the SFAR, a byte store to the lance's page traps 0x1f with the SFSR clear and AFSR `0x9180120e`, a store to empty memory doesn't trap and leaves the SFSR clear, a load from the code's page returns RAM; on the SS-10 nothing traps and the AFSR stays clear; 7 cases, the SS-600MP ones fail without 0159-0160 (`ld-code-page` without the TLB split alone) | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -1046,7 +1049,7 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `ross225r.bin` | SuperSparc-50 | 256 | installer (POST: `TI, TMS390Z50`) |
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
 | SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
-| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; still silent ("Sun's own SS-600MP boot PROM") |
+| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; with `wsh/0159`-`0160` (lab build) past it to the DMA control register test (`0xc3`); still silent ("Sun's own SS-600MP boot PROM") |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
 | LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error`; with `wsh/0056`-`0057` too it probes all slots and boots Solaris 2.6, NetBSD 9.3 and SunOS 4.1.4 over ttya with `-nographic` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
@@ -2330,7 +2333,7 @@ What it would take for the rest:
        `0xb1`-`0xc0` then pass or are skipped without the diagnostic switch.
      - *Lance (`wsh/0157`, progress `0xc1`):* the register address port keeps bits 1-0 (CSR0-CSR3,
        the Am7990), then CSR0-CSR3 themselves pass as QEMU has them.
-     - *Next, still `0xc1`:* the lance's register size check. With the expected-trap flag set it
+     - *Next, still `0xc1` (done in item 6):* the lance's register size check. With the expected-trap flag set it
        reads every offset from 1 to `0xfff` of the lance's page with byte, word and doubleword
        loads through the MMU bypass ASI and wants each to end in a data access exception (trap 9)
        with the SFSR at `0x436` (bit 10, a time-out in the SuperSPARC's external bus error bits,
@@ -2358,16 +2361,57 @@ What it would take for the rest:
      login:` and `netbsd93-sparc` on SS-5 to `login:`, and OpenBIOS on SS-5 and SS-600MP reaches
      its prompt. The SS-20 PROM (`ss20_v2.25_rom`, `TI-SuperSparc-50`) and the SS-5 PROM (`ss5.bin`)
      print byte for byte the same to their `ok` prompt as with the series to 0150.
+  6. **pve-qemu `wsh/0159`-`0161` (2026-11-26, lab build of 11.1.3 with the whole series):** the
+     expected values come from the PROM's compare code (a disassembly in the lab, nothing of it in
+     the repository), the names of the bits from SunOS 4.1.4's `sun4m/mmu.h` and `async.h`.
+     - *What the check does:* with an expected-trap flag set (trap 9), it loads a byte at offsets 1,
+       2, 4 ... `0x800` of the lance's page (`0xe.f006_0000`) through ASI `0x2e`, then a word from
+       offset 4 and a doubleword from offset 8 on, and wants each to trap with SFSR `0x436`
+       (ignoring the level bits) and the address in the SFAR. Bit 10 is the bus error bit, not the
+       time-out bit (11): the SBus answers with an error acknowledge. It then makes the same stores
+       with trap `0x1f` expected and reads the IOMMU's AFSR, which must be `ERR | BERR | size |
+       S | MID 8 | address bits 4-0 << 12 | SBus size << 9 | 0xe`, and the AFAR, then clears the
+       AFSR. Byte, word and doubleword SBus sizes are 1, 0 and 7.
+     - *Loads (`wsh/0159`, CPU feature `buserr-trap`):* a failed load traps with the MMU off and
+       through the bypass ASIs, BE added. Two side effects showed up on the way: the PROM probes
+       memory banks 1-15 at `n << 28` with the same trap expected (so the traps are right there
+       too), and the probe of bank 15 at `0x0f000_0000` shares a page with the trap vectors, which
+       boot mode fetches from the PROM. QEMU kept one TLB entry for both, so the load read the
+       PROM and a later vector fetch ran zeros from the bus (`Trap 0x02` in error mode): with
+       `buserr-trap` boot mode keeps fetch and data entries apart. A failed store or fetch with the
+       MMU off no longer leaves status in the SFSR: a write to `0xf.0080_0200` (a board register
+       QEMU doesn't have, during the PROM's register setup) had left FT 5 there, and the first lance
+       fault read `0x437` (overwrite) and the loop on error never ended.
+     - *Stores (`wsh/0160`):* on the SS-600MP a failed CPU store to `0xe.xxxx_xxxx` fills the
+       IOMMU's AFSR and AFAR and raises its interrupt (level 15, one trap per store); the PROM's
+       handler masks the source and the test reads and clears the AFSR. The interrupt is on
+       system interrupt bit 30 as before (module error); the board's M-to-S write error is bit 29.
+       SunOS's level 15 handler would look at the wrong source; not changed, not seen.
+     - *Progress:* past `0xc1` and `0xc2` to `0xc3` in 3 runs of 3 (40 s each). `0xc3` is the
+       on-board DMA's control register (slot f `0x81000`): a walking one (bit 15 left out), and the
+       read must be `(value | 0x40000000) & 0x40042b90`, so device ID 4 in bits 31-28 and writable
+       bits `0x00042b90`. QEMU's DMA has the DMA2's ID `0xa` and keeps other bits, so the PROM loops
+       there. SunOS's esp driver reads that ID, so a change needs `sunos412-ss600mp` rechecked.
+       Still silent, nothing on cg3.
+     Regression for `wsh/0159`-`0161` (the series to 0161 applied with `patch -p1 -s -t -F0`, 196
+     patches without fuzz, the tree identical to the one tested, lab): `make check-qtest-sparc` 38
+     passed, 2 skipped, 1 failed (`qmp-test`'s `/sparc/qmp/oob`, as before),
+     `sun4m-sbus-error-test` 7/7. Under OpenBIOS (built from `openbios/`) the stored
+     `sunos412-ss600mp` disk boots to `sunos412 login:` (`dma0`, `esp0`, `sd0`, `lebuffer0`,
+     `le0`), `sol26-ss20` to `console login:` and `netbsd93-sparc` on SS-5 to `login:`. The SS-20
+     PROM (`ss20_v2.25_rom`, `TI-SuperSparc-50`) and the SS-5 PROM reach `ok`, the SS-10 PROM stops
+     at `Probing Memory Bank #4 Data Access Error` as in the table above; not compared byte for byte
+     this time (the new code runs only with `buserr-trap`).
 
   **Cause:** not the CPU module type and not the MBus module IDs: the PROM checks the
   SuperSPARC's diagnostic internals (boot mode, store buffer, cache RAMs, MXCC) and the board's
-  registers (counters, IOMMU, VMEbus control, lance, and next the SBus time-outs) in its POST,
+  registers (counters, IOMMU, VMEbus control, lance, bus errors, and next the DMA) in its POST,
   where QEMU models only what an operating system uses, and it loops on the first failure. The
   SS-20 PROM's POST, by comparison, passes on QEMU with `-cpu TI-SuperSparc-50` (no MXCC, "SS-10 and SS-20").
   **Scope:**
   - *Sun's PROM on a SuperSPARC SS-600MP:* medium to large. The diagnostic registers as storage are
     small each (the store buffer; the cache tag and data RAMs need the TMS390Z50 geometry), so
-    were the board register tests so far (`wsh/0151`-`0158`), the SBus time-outs next are medium,
+    were the board register tests so far (`wsh/0151`-`0158`); the bus errors (`wsh/0159`-`0160`) were medium,
     and each step needs a lab loop like the one above; tests that check
     cache behaviour through those registers (miss and hit, MRU, lock, flash clear) need a cache
     model behind them, which is large. A way to skip or shorten the POST wasn't found.

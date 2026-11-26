@@ -60,6 +60,14 @@ cg3, CS4231, Sun mouse).
 Each checks the newest frame against QEMU's screendump pixel for pixel, `keytest` and `mousetest`
 in the guest through the bridge, a 440 Hz tone from `soundtest` without a dropout in the WAV the
 audio pipeline wrote, and that the video pipeline ends by itself when QEMU quits.
+After the runs, the clients as the root of an unprivileged container (a user namespace whose root
+is the host's uid 100000; `docker run --security-opt seccomp=unconfined`, else skipped) on a bus
+set up as qemu-server does for `dbus-display-uids: 100000`, and the ones that must stay out (uid
+200000, uid 100000 on a VM's bus that doesn't name it, a node user outside `wsh-display`).
+
+The clients authenticate with `G_DBUS_CONNECTION_FLAGS_CROSS_NAMESPACE`: `AUTH EXTERNAL` without a
+uid, so the bus (and QEMU, on the listener's connection) takes the uid the kernel reports for the
+socket. In a user namespace the uid the client sees isn't that one, and the bus would refuse it.
 
 With real GL frames (the 3dfx Glide and Mesa guests), with the package and `python3-gi`,
 `gir1.2-gstreamer-1.0` and `gir1.2-gst-plugins-base-1.0` installed in the container first:

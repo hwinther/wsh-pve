@@ -27,6 +27,11 @@
 #        x86_64-egl as x86_64-gl, with qemudbussrc dmabuf-import=egl: every dmabuf read through
 #                   EGL (Mesa's software device), the way it reads a GPU's tiled dmabufs
 #        sparc32    SS-5, cg3, CS4231, Sun keyboard and mouse (relative): the shared map
+#   4. An unprivileged container's client: VM 101's bus with 'dbus-display-uids: 100000', set up by
+#      qemu-server's PVE::QemuServer::DBusDisplay (from the patch): qemu-dbus-input, qemudbussrc and
+#      qemudbusaudiosrc run as root of a user namespace whose root is the host's uid 100000 (unshare;
+#      needs docker run --security-opt seccomp=unconfined, else skipped) and get in; uid 200000,
+#      uid 100000 on VM 100's bus and a node user outside wsh-display are refused.
 #
 # OUTDIR gets summary.txt, and per run the serial log, QEMU's screendump, the newest frame as PPM,
 # the WAV the audio pipeline wrote and the logs of the pipelines and the bridge. Exit 0 when every
@@ -64,7 +69,7 @@ apt-get update -qq
 # libegl1, libegl-mesa0, libgl1-mesa-dri: the 3dfx binary's EGL display (llvmpipe) for the GL run
 apt-get install --no-install-recommends --assume-yes -qq "$DEB" pve-qemu-kvm dbus-daemon \
 	gstreamer1.0-tools gstreamer1.0-plugins-base gstreamer1.0-plugins-good python3 \
-	libegl1 libegl-mesa0 libgl1-mesa-dri > /dev/null
+	libegl1 libegl-mesa0 libgl1-mesa-dri acl > /dev/null
 dpkg-query -W -f '${Package} ${Version}\n' wsh-gst-qemu-dbus pve-qemu-kvm gstreamer1.0-tools | tee "$OUT/versions.txt"
 
 step "Package"
@@ -176,6 +181,135 @@ for run in $RUNS; do
 		kill "$pid" 2> /dev/null || true
 	fi
 done
+
+step "An unprivileged container (dbus-display-uids)"
+# A client whose uid inside its user namespace (0) is the host's 100000, as in an unprivileged
+# container, on the bus of VM $UVMID with 'dbus-display-uids: 100000'. qemu-server's own code
+# (PVE::QemuServer::DBusDisplay from the patch, with a stand-in for PVE::Tools) writes the VM's bus
+# configuration, adds the user for the uid and the directory's ACL entry; dbus-daemon reads that
+# configuration, as wsh-dbus-display@<vmid>.service does.
+UVMID=101
+UBUS=/run/wsh-dbus-display/$UVMID.sock
+userns() { # OUTER-UID COMMAND...: COMMAND as root of a user namespace whose root is OUTER-UID
+	outer=$1
+	shift
+	unshare -U --map-users="0:$outer:65536" --map-groups="0:$outer:65536" --setuid 0 --setgid 0 "$@"
+}
+if [ ! -r "$KERNELS/kernel-fb-x86_64" ]; then
+	skip "unprivileged container: no $KERNELS/kernel-fb-x86_64"
+elif ! userns 100000 true 2> "$OUT/userns.log"; then
+	skip "unprivileged container: no user namespaces here ($(cat "$OUT/userns.log"); docker run --security-opt seccomp=unconfined)"
+else
+	mkdir -p "$RUN/perl/PVE/QemuServer" /run/qemu-server "$OUT/userns"
+	extract src/PVE/QemuServer/DBusDisplay.pm > "$RUN/perl/PVE/QemuServer/DBusDisplay.pm"
+	cat > "$RUN/perl/PVE/Tools.pm" << 'EOF'
+package PVE::Tools;
+# the three subs of PVE::Tools that PVE::QemuServer::DBusDisplay uses
+use strict;
+use warnings;
+use base 'Exporter';
+our @EXPORT_OK = qw(run_command file_set_contents lock_file);
+sub run_command {
+    my ($cmd, %param) = @_;
+    if (my $out = $param{outfunc}) {
+        open(my $fh, '-|', @$cmd) or die "$cmd->[0]: $!\n";
+        while (my $line = <$fh>) { chomp $line; $out->($line); }
+        close($fh) or die "@$cmd failed\n";
+    } else {
+        system(@$cmd) == 0 or die "@$cmd failed\n";
+    }
+}
+sub file_set_contents {
+    my ($path, $data) = @_;
+    open(my $fh, '>', $path) or die "$path: $!\n";
+    print $fh $data;
+    close($fh) or die "$path: $!\n";
+}
+sub lock_file {
+    my ($path, $timeout, $code) = @_;
+    eval { $code->() };
+}
+1;
+EOF
+	qsd() { perl -I"$RUN/perl" -MPVE::QemuServer::DBusDisplay -e "$1"; }
+	qsd 'my $u = PVE::QemuServer::DBusDisplay::parse_uids("100000");
+		PVE::QemuServer::DBusDisplay::ensure_users($u);
+		PVE::Tools::file_set_contents(PVE::QemuServer::DBusDisplay::config_path('"$UVMID"'),
+			PVE::QemuServer::DBusDisplay::bus_config($u));' || fail "unprivileged container: the bus configuration"
+	cp "/run/qemu-server/$UVMID.dbus-display.conf" "$OUT/userns/"
+	getent passwd 100000 > "$OUT/userns/passwd.txt" || true
+	setpriv --regid=wsh-display --clear-groups dbus-daemon --nofork --nopidfile \
+		--config-file="/run/qemu-server/$UVMID.dbus-display.conf" --address="unix:path=$UBUS" \
+		2> "$OUT/userns/dbus-daemon.log" &
+	ubus_pid=$!
+	for _ in $(seq 50); do [ -S "$UBUS" ] && break; sleep 0.1; done
+	qsd 'PVE::QemuServer::DBusDisplay::sync_dir_acl()' || fail "unprivileged container: the directory's ACL"
+	getfacl --numeric /run/wsh-dbus-display > "$OUT/userns/acl.txt" 2>&1
+	if grep -q '^user:100000:--x$' "$OUT/userns/acl.txt"; then
+		pass "unprivileged container: uid 100000 has a user ($(cut -d: -f1 "$OUT/userns/passwd.txt")) and --x on /run/wsh-dbus-display"
+	else
+		fail "unprivileged container: no ACL entry for 100000 (see userns/acl.txt)"
+	fi
+	qemu-system-x86_64 -M pc -m 128 -vga std -device AC97,audiodev=snd0 -accel tcg -nodefaults \
+		-kernel "$KERNELS/kernel-fb-x86_64" -append "console=ttyS0 wisp=shell" \
+		-audiodev dbus,id=snd0,out.frequency=48000 -display "dbus,addr=unix:path=$UBUS,audiodev=snd0" \
+		-serial null -daemonize -pidfile "$RUN/userns.pid" > "$OUT/userns/qemu.log" 2>&1 ||
+		fail "unprivileged container: QEMU didn't start"
+	export GST_REGISTRY=/tmp/gst-registry-userns.bin
+	# the bus and a call on it (qemu-dbus-input), and the listener connections QEMU makes back
+	# (qemudbussrc: a picture, qemudbusaudiosrc: its listener)
+	if echo query | userns 100000 qemu-dbus-input --quiet --address "unix:path=$UBUS" \
+		> "$OUT/userns/input.txt" 2>&1 && grep -q '^mode ' "$OUT/userns/input.txt"; then
+		pass "unprivileged container: qemu-dbus-input as uid 100000: $(cat "$OUT/userns/input.txt")"
+	else
+		fail "unprivileged container: qemu-dbus-input as uid 100000 (see userns/input.txt)"
+	fi
+	if userns 100000 timeout 30 gst-launch-1.0 -q qemudbussrc address="unix:path=$UBUS" num-buffers=1 \
+		! fakesink > "$OUT/userns/video.txt" 2>&1; then
+		pass "unprivileged container: qemudbussrc as uid 100000 got a picture"
+	else
+		fail "unprivileged container: qemudbussrc as uid 100000 (see userns/video.txt)"
+	fi
+	# the guest plays nothing here: the listener registered (QEMU authenticated its connection) is
+	# enough, then the pipeline is stopped
+	userns 100000 env GST_DEBUG=qemudbusaudiosrc:4 timeout 5 gst-launch-1.0 -q qemudbusaudiosrc \
+		address="unix:path=$UBUS" ! fakesink > "$OUT/userns/audio.txt" 2>&1 || true
+	if grep -q 'listening on' "$OUT/userns/audio.txt"; then
+		pass "unprivileged container: qemudbusaudiosrc as uid 100000 registered its listener"
+	else
+		fail "unprivileged container: qemudbusaudiosrc as uid 100000 (see userns/audio.txt)"
+	fi
+	# the others: another container's root (no ACL entry), the same uid on a VM's bus that doesn't
+	# name it, a node user outside wsh-display
+	refused() { # NAME LOG COMMAND...: passes when COMMAND fails
+		name=$1
+		log=$2
+		shift 2
+		if echo query | "$@" > "$OUT/userns/$log" 2>&1; then
+			fail "unprivileged container: $name got in (see userns/$log)"
+		else
+			pass "unprivileged container: $name refused: $(tail -n 1 "$OUT/userns/$log")"
+		fi
+	}
+	refused "uid 200000 (another container)" refused-200000.txt \
+		userns 200000 qemu-dbus-input --quiet --timeout 2 --address "unix:path=$UBUS"
+	refused "uid 100000 on VM $VMID's bus (no dbus-display-uids)" refused-other-vm.txt \
+		userns 100000 qemu-dbus-input --quiet --timeout 2 --address "unix:path=$BUS"
+	id outsider > /dev/null 2>&1 || useradd --system --no-create-home outsider
+	refused "a node user outside wsh-display" refused-outsider.txt \
+		setpriv --reuid=outsider --regid=outsider --init-groups \
+		qemu-dbus-input --quiet --timeout 2 --address "unix:path=$UBUS"
+	pid=$(cat "$RUN/userns.pid" 2> /dev/null || true)
+	[ -z "$pid" ] || kill "$pid" 2> /dev/null || true
+	kill "$ubus_pid" 2> /dev/null || true
+	rm -f "/run/qemu-server/$UVMID.dbus-display.conf"
+	qsd 'PVE::QemuServer::DBusDisplay::sync_dir_acl()' || fail "unprivileged container: the directory's ACL at the end"
+	if getfacl --numeric /run/wsh-dbus-display 2>&1 | grep -q '^user:100000:'; then
+		fail "unprivileged container: the ACL entry for 100000 stays after the VM's bus is gone"
+	else
+		pass "unprivileged container: the ACL entry goes with the VM's bus"
+	fi
+fi
 
 kill "$bus_pid" 2> /dev/null || true
 step "Summary"

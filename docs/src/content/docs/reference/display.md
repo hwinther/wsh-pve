@@ -61,8 +61,17 @@ qm set 120 --vga std,mesa=1,mesa-display=dbus   # 3DFX/Mesa: the D-Bus display w
   dbus-daemon makes it), so only root and the group reach the socket; the bus's policy
   (`/usr/share/qemu-server/dbus-display.conf`) lets root own `org.qemu` and lets root and the
   members of the group `wsh-display` (created by the qemu-server package) connect and call it.
-  Nobody else may connect. A client in a container gets the directory bind-mounted and a member of
-  that group (as the host sees its user).
+  Nobody else may connect, except the uids in `dbus-display-uids`. A client in a privileged
+  container gets the directory bind-mounted; one in an unprivileged container also needs its uid
+  in `dbus-display-uids` (see [On a node](#on-a-node)).
+- **`dbus-display-uids`** (a VM option, `uid[;uid...]`, only root may set it): host uids that may
+  use this VM's bus besides root and `wsh-display`, such as the root of an unprivileged container
+  that streams the VM (`100000` with PVE's default mapping). At the VM's start qemu-server writes
+  the VM's bus configuration (`/run/qemu-server/<vmid>.dbus-display.conf`: the shared policy plus
+  each uid, which may connect and call `org.qemu` but not own a name), gives each uid a user on the
+  node if it has none (`wsh-display-<uid>`, no home, no login shell: dbus-daemon refuses a uid it
+  can't look up, whatever the policy says) and an ACL entry `--x` on `/run/wsh-dbus-display`, which
+  goes when no running VM names the uid any more. Other VMs' buses still refuse the uid.
 - **Without GL** (`display=dbus`) it works with every graphic card that has a picture: `std`,
   `cirrus`, `vmware`, `virtio`, and on sparc `tcx` and `cg3` (SS-5 and the other sparc32 machines)
   and sun4u's `std`. The client gets the console's pixels (`Scanout`/`Update`, or a shared memory
@@ -81,8 +90,8 @@ qm set 120 --vga std,mesa=1,mesa-display=dbus   # 3DFX/Mesa: the D-Bus display w
   restarted, while VNC goes on.
 
 In the web UI it is **Hardware > Display > D-Bus display** and **D-Bus refresh (ms)**, and the audio
-device's **Backend Driver > D-Bus**. Refused: `dbus-refresh` or the audio driver `dbus` without the
-D-Bus display; the D-Bus display with a `server` (SDL), with `qxl*`, `virtio-gl`, `none` or
+device's **Backend Driver > D-Bus** (`dbus-display-uids` only on the command line and in the API).
+Refused: `dbus-refresh`, the audio driver `dbus` or `dbus-display-uids` without the D-Bus display; the D-Bus display with a `server` (SDL), with `qxl*`, `virtio-gl`, `none` or
 `serial*`, and together with `mesa-display=egl-headless` (QEMU has one display next to VNC).
 
 To look at a running VM's bus as root:
@@ -180,7 +189,10 @@ gst-launch-1.0 qemudbusaudiosrc vmid=130 ! audioconvert ! autoaudiosink   # the 
 qemu-dbus-input --vmid 130                                                 # input, one command per line
 ```
 
-- **Who may**: root, or a member of `wsh-display` (the bus's policy, see [D-Bus display](#d-bus-display)).
+- **Who may**: root, a member of `wsh-display`, or a uid in the VM's `dbus-display-uids` (the bus's
+  policy, see [D-Bus display](#d-bus-display)). The clients authenticate without naming a uid
+  (GLib's `CROSS_NAMESPACE`), so they also work from a user namespace (an unprivileged container),
+  where the uid they see isn't the one the bus sees.
   `vmid=` is short for `address=unix:path=/run/wsh-dbus-display/<vmid>.sock`; `console=` picks
   another console than 0. Each element registers its own listener, so they run next to each other,
   next to qemu-rdp and next to VNC.
@@ -318,24 +330,8 @@ GL read through EGL (`x86_64-egl`, Mesa's software device), every check passed.
 ### On a node
 
 Tested on a PVE node (pve-qemu-kvm 11.1.3-4, qemu-server with the D-Bus display, an NVIDIA GPU on
-NVIDIA's own driver): Wolf in a **privileged** container, the VM started with `qm start`.
-
-**An unprivileged container doesn't work with the bus as it is.** Mapping the container's group
-onto `wsh-display` (an `lxc.idmap` line and `root:<gid>:1` in `/etc/subgid`) does give the
-container the socket directory, but the VM's bus then refuses it, for two reasons:
-
-- GLib's D-Bus client authenticates with `AUTH EXTERNAL <uid>`, the uid it sees in the container
-  (0), while the bus sees the host's uid (100000): the bus says `REJECTED EXTERNAL`.
-- With the uid left out of `AUTH EXTERNAL` (or given as the host's), the bus accepts the
-  authentication and then drops the connection: dbus-daemon (1.16) checks `<allow group=...>`
-  against the user database of the node, not the connecting process's groups. A uid without a
-  line in the node's `/etc/passwd` and `/etc/group` (the container's root, 100000) isn't in
-  `wsh-display` for it. The same is true of a process on the node with `wsh-display` only as a
-  supplementary group.
-
-An unprivileged container would need the bus policy to name it (for example `<allow user="100000"/>`
-next to the group, which qemu-server's policy file doesn't offer a place for yet), or a user for that
-uid in the node's `wsh-display` group.
+NVIDIA's own driver): Wolf in a **privileged** container, the VM started with `qm start`. An
+unprivileged container needs `dbus-display-uids` (below).
 
 **The privileged container.** The template is `e2e/streaming/Dockerfile`'s `ct` stage (Debian 13
 with systemd, Wolf, `wsh-gst-qemu-dbus`, x264, GStreamer's nvcodec, PulseAudio, `wolf-start`,
@@ -375,6 +371,48 @@ pct exec <ctid> -- wolf-start <vmid>              # PulseAudio, Wolf, the app "w
   `wolf-start` again (other VMs, another encoder) keeps the paired clients.
 - Moonlight reaches Wolf on TCP 47984, 47989 and 48010 and UDP 47999, 48100 and 48200 of the
   container's address.
+
+**An unprivileged container** (the same template) works with `dbus-display-uids` (qemu-server and
+`wsh-gst-qemu-dbus` newer than the test above; not run on a node yet). Two things kept it out
+before: GLib's D-Bus client authenticated with `AUTH EXTERNAL 0`, the uid it sees in the container,
+while the bus sees the host's (100000), and dbus-daemon refuses a uid without a user in the node's
+user database, whatever its policy says, and checks `<allow group=...>` against that database, not
+against the process's groups. Now the clients send no uid, and qemu-server gives the uids in
+`dbus-display-uids` a user, a policy of their own on that VM's bus and the right to pass through
+the socket directory. On the node, as root:
+
+```sh
+qm set <vmid> --vga std,display=dbus --audio0 device=AC97,driver=dbus \
+  --dbus-display-uids 100000      # the container's root on the node (lxc.idmap: 0 -> 100000)
+qm start <vmid>
+pct create <ctid> wsh-stream3d-ct.tar.gz --hostname wolf --unprivileged 1 --ostype debian \
+  --rootfs local:4 --memory 1536 --cores 4 --features nesting=1 --net0 name=eth0,bridge=vmbr0,ip=dhcp \
+  --dev0 /dev/uinput
+cat >> /etc/pve/lxc/<ctid>.conf <<EOF
+lxc.mount.entry: /run/wsh-dbus-display srv/wsh-dbus-display none bind,create=dir 0 0
+lxc.mount.entry: /dev/input dev/input none bind,create=dir 0 0
+lxc.cgroup2.devices.allow: c 13:* rwm
+EOF
+pct start <ctid>
+pct exec <ctid> -- wolf-start <vmid>
+```
+
+- **Which uid**: the host uid of the container's root (or of the user the clients run as there):
+  `100000` for PVE's default mapping, else what the container's `lxc.idmap` maps 0 to. No group
+  mapping and no `/etc/subgid` entry are needed.
+- **What the uid gets**: this VM's screen, sound, keyboard and mouse, as a VNC console would give
+  them. Every container whose root is that host uid and which has the directory bind-mounted gets
+  them; with the default mapping all unprivileged containers share 100000, so only the bind mount
+  keeps the others out. A streaming container with an `lxc.idmap` range of its own gets a uid no
+  other container has.
+- **What stays on the node**: the user `wsh-display-<uid>` (locked, no home, `nologin`) is kept
+  after the VM stops (`userdel wsh-display-<uid>` removes it); it lets that uid be named, nothing
+  more (dbus-daemons accept a uid only with a user). The ACL entry goes when no running VM names
+  the uid.
+- **Not tested on a node yet**: the input. Wolf's virtual keyboard and mice appear in the node's
+  `/dev/input` as `root:input 0660`, which the container's root can't open, so `wolf-input-bridge`
+  needs those devices given to the container (a udev rule on the node, for example); the picture
+  and the sound need only the bus.
 
 **NVIDIA GPU: NVENC.** Add the GPU's devices and NVIDIA's libraries of the node's driver version
 (here installed with NVIDIA's installer, not packages; copy them from the node), then start Wolf

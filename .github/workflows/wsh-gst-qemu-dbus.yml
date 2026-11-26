@@ -12,7 +12,9 @@ name: wsh-gst-qemu-dbus package
 # mouse, AC97), on aarch64's virt (virtio tablet, AC97), on the SS-5 (cg3, CS4231, Sun mouse) and,
 # with /dev/udmabuf, in the 3dfx binary with -display dbus,gl=on; gst-launch-1.0 pipelines and the bridge, as a member of wsh-display,
 # check the picture against QEMU's screendump, the keyboard, the mouse, a 440 Hz tone and the end of
-# stream. Nothing is published. main (or by hand on main): the same, then a GitHub release
+# stream; a client in a user namespace (the root of an unprivileged container, host uid 100000) gets
+# onto a VM's bus with dbus-display-uids, and others are refused. Nothing is published. main (or by
+# hand on main): the same, then a GitHub release
 # wsh-gst-qemu-dbus-<version> with the .deb, tagged on the tip of main, unless one exists already,
 # and the Pages deploy (repo-update.yml), which adds the newest wsh-gst-qemu-dbus release's .deb to
 # the apt repository.
@@ -115,7 +117,8 @@ jobs:
           mkdir -p "$RUNNER_TEMP/out"
           dev=()
           [ ! -e /dev/udmabuf ] || dev=(--device /dev/udmabuf)
-          docker run --rm "${dev[@]}" -v "$PWD:/src:ro" -v "$RUNNER_TEMP/deb:/deb:ro" -v "$RUNNER_TEMP/kernels:/kernels:ro" \
+          # seccomp=unconfined: user namespaces, for the client of an unprivileged container
+          docker run --rm "${dev[@]}" --security-opt seccomp=unconfined -v "$PWD:/src:ro" -v "$RUNNER_TEMP/deb:/deb:ro" -v "$RUNNER_TEMP/kernels:/kernels:ro" \
             -v "$RUNNER_TEMP/out:/out" debian:trixie sh /src/packages/wsh-gst-qemu-dbus/test.sh \
             "/deb/wsh-gst-qemu-dbus_${VERSION}_amd64.deb" /out
 
