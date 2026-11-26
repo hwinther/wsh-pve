@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..6fd5d64 100644
+index bc240a0..a30d3fe 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,138 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,142 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -212,6 +212,10 @@ index bc240a0..6fd5d64 100644
 +wsh/0181-hw-sparc-sun4m-let-the-SS-600MP-IOMMU-s-enable-bit-t.patch
 +wsh/0182-hw-scsi-esp-send-data-by-DMA-in-the-SS-600MP-ESP-s-t.patch
 +wsh/0183-tests-qtest-test-the-SS-600MP-ESP-s-DMA-read-in-targ.patch
++wsh/0184-hw-sparc-sun4m-answer-the-SS-600MP-MXCC-s-registers-.patch
++wsh/0185-hw-scsi-esp-take-the-LUN-from-the-CDB-without-IDENTI.patch
++wsh/0186-hw-sparc-sun4m-give-the-SS-600MP-s-audio-chip-regist.patch
++wsh/0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers-.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -27832,6 +27836,669 @@ index 0000000..339ac1e
 +     qtest_add_func("sun4m-ss600mp/esp-cfg2", test_esp_cfg2);
 +     qtest_add_func("sun4m-ss600mp/esp-size-error", test_esp_size_error);
 ++    qtest_add_func("sun4m-ss600mp/esp-dma-read", test_esp_dma_read);
++     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
++ 
++     return g_test_run();
+diff --git a/debian/patches/wsh/0184-hw-sparc-sun4m-answer-the-SS-600MP-MXCC-s-registers-.patch b/debian/patches/wsh/0184-hw-sparc-sun4m-answer-the-SS-600MP-MXCC-s-registers-.patch
+new file mode 100644
+index 0000000..bb7256f
+--- /dev/null
++++ b/debian/patches/wsh/0184-hw-sparc-sun4m-answer-the-SS-600MP-MXCC-s-registers-.patch
+@@ -0,0 +1,194 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: answer the SS-600MP MXCC's registers in its
++ MBus space
++
++The SS-600MP boot PROM printed "Cpu #0 Data Access Exception" before
++its ok prompt, and its banner command printed the exception again. Its
++Forth word mxcc-ctl@ (and mxcc-ctl!) reads and writes the MXCC control
++register of the module it runs on through the MMU bypass ASI at
++physical 0xf.f8c0_0a04, where QEMU had nothing; the load took a bus
++error and the PROM gave up on the CPU node (no "Cpu #0" probe line, no
++banner, no memory test and no auto-boot).
++
++On the sun4m MBus each module ID n has the 16 MB at 0xf.f000_0000 +
++(n << 24), and a SuperSPARC module's MXCC answers its registers at
++offset 0x00c0_0000 there: the registers its CPU reaches through ASI 2 at
++0x01c0_0000 (SunOS's sun4m mmu.h has MXCC_CNTL, the control register,
++at ASI 2 0x01c0_0a04). So 0xf.f8c0_0a04 is the control register of
++module ID 8, CPU 0. The PROM reads it and sets E$ enable (MXCC_CE).
++
++New hwdef field mbus_mxcc, set on the SS-600MP only: each CPU with an
++MXCC gets a 4 KB region "mxcc-mbus" at its module's offset 0x00c0_0000
++that reads and writes the same state as ASI 2: the control (0xa00,
++0xa04), module reset (0xc00, read only), error (0xe00, writing a 1
++clears a bit) and MBus port address (0xf00) registers, each a
++doubleword with its low word at +4; the rest reads 0 (LOG_UNIMP). A CPU
++without an MXCC (TI-SuperSparc-50) and the other machines get nothing
++there; with TI-SuperSparc-50 the PROM never reads it. Trace events
++sun4m_mxcc_mbus_read and sun4m_mxcc_mbus_write; no new state.
++
++With it the PROM probes "Cpu #0 TI,TMS390Z55" and Cpus #1-3 (Nothing
++there), its memory banks and SBus slots, prints its banner, tests and
++clears memory and auto-boots.
++---
++ hw/sparc/sun4m.c      | 105 ++++++++++++++++++++++++++++++++++++++++++
++ hw/sparc/trace-events |   2 +
++ 2 files changed, 107 insertions(+)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index f0d46e1f..7bf5fb61 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -25,6 +25,7 @@
++ #include "qemu/osdep.h"
++ #include "qemu/units.h"
++ #include "qemu/cutils.h"
+++#include "qemu/log.h"
++ #include "qapi/error.h"
++ #include "qemu/datadir.h"
++ #include "target/sparc/cpu.h"
++@@ -125,6 +126,7 @@ struct sun4m_hwdef {
++     bool sbus_bus_errors;       /* buserr-trap, SBus write errors (M-to-S) */
++     bool esp_dma_esc;           /* the SCSI DMA is the ESC gate array */
++     uint8_t esp_cfg2_mask;      /* if set: the bits the ESP's config 2 keeps */
+++    bool mbus_mxcc;             /* an MXCC's registers in its MBus space */
++ };
++ 
++ struct Sun4mMachineClass {
++@@ -1168,6 +1170,100 @@ static const MemoryRegionOps dbri_prom_ops = {
++     },
++ };
++ 
+++/*
+++ * A SuperSPARC module with an MXCC answers in its MBus module space too:
+++ * module ID n has the 16 MB at 0xf.f000_0000 + (n << 24), and the MXCC's
+++ * registers, which its CPU reaches through ASI 2 at 0x01c0_0000, are at
+++ * offset 0x00c0_0000 there. SunOS's sun4m mmu.h has the control register
+++ * at ASI 2 0x01c0_0a04 (MXCC_CNTL) and the error register at 0x01c0_0e00
+++ * (MXCC_ERROR). The SS-600MP's boot PROM reads and writes the control
+++ * register of the module it runs on at 0xf.f8c0_0a04 through the MMU
+++ * bypass ASI. This is the state ASI 2 reaches: the control, error,
+++ * module reset and port address registers; the rest reads 0.
+++ */
+++#define MXCC_MBUS_BASE      0xff0000000ULL
+++#define MXCC_MBUS_OFFSET    0x00c00000
+++#define MXCC_MBUS_SIZE      0x1000
+++
+++static uint64_t *mxcc_mbus_reg(CPUSPARCState *env, hwaddr addr)
+++{
+++    switch (addr & ~7) {
+++    case 0xa00:     /* control */
+++        return &env->mxccregs[3];
+++    case 0xc00:     /* module reset */
+++        return &env->mxccregs[5];
+++    case 0xe00:     /* error */
+++        return &env->mxccregs[6];
+++    case 0xf00:     /* MBus port address */
+++        return &env->mxccregs[7];
+++    default:
+++        return NULL;
+++    }
+++}
+++
+++static uint64_t mxcc_mbus_read(void *opaque, hwaddr addr, unsigned size)
+++{
+++    CPUSPARCState *env = &SPARC_CPU(opaque)->env;
+++    uint64_t *reg = mxcc_mbus_reg(env, addr);
+++    uint64_t val = 0;
+++
+++    if (!reg) {
+++        qemu_log_mask(LOG_UNIMP, "mxcc-mbus: read of unimplemented "
+++                      "register 0x%" HWADDR_PRIx "\n", addr);
+++    } else if (size == 8) {
+++        val = *reg;
+++    } else {
+++        val = extract64(*reg, (addr & 4) ? 0 : 32, 32);
+++    }
+++    trace_sun4m_mxcc_mbus_read(addr, size, val);
+++    return val;
+++}
+++
+++static void mxcc_mbus_write(void *opaque, hwaddr addr, uint64_t val,
+++                            unsigned size)
+++{
+++    CPUSPARCState *env = &SPARC_CPU(opaque)->env;
+++    uint64_t *reg = mxcc_mbus_reg(env, addr);
+++    uint64_t mask = size == 8 ? ~0ULL :
+++                    (addr & 4) ? 0xffffffffULL : 0xffffffff00000000ULL;
+++
+++    trace_sun4m_mxcc_mbus_write(addr, size, val);
+++    if (size == 4 && !(addr & 4)) {
+++        val <<= 32;
+++    }
+++    if (!reg || reg == &env->mxccregs[5]) {
+++        qemu_log_mask(LOG_UNIMP, "mxcc-mbus: write of unimplemented "
+++                      "register 0x%" HWADDR_PRIx "\n", addr);
+++    } else if (reg == &env->mxccregs[6]) {
+++        /* writing a 1 clears an error bit, as through ASI 2 */
+++        *reg &= ~(val & mask);
+++    } else {
+++        *reg = (*reg & ~mask) | (val & mask);
+++    }
+++}
+++
+++static const MemoryRegionOps mxcc_mbus_ops = {
+++    .read = mxcc_mbus_read,
+++    .write = mxcc_mbus_write,
+++    .endianness = DEVICE_BIG_ENDIAN,
+++    .valid = {
+++        .min_access_size = 4,
+++        .max_access_size = 8,
+++    },
+++};
+++
+++static void mxcc_mbus_init(SPARCCPU *cpu)
+++{
+++    CPUSPARCState *env = &cpu->env;
+++    MemoryRegion *mr = g_new(MemoryRegion, 1);
+++    unsigned int mid = (env->mxccregs[7] >> 24) & 0xf;
+++
+++    memory_region_init_io(mr, OBJECT(cpu), &mxcc_mbus_ops, cpu, "mxcc-mbus",
+++                          MXCC_MBUS_SIZE);
+++    memory_region_add_subregion(get_system_memory(), MXCC_MBUS_BASE +
+++                                ((hwaddr)mid << 24) + MXCC_MBUS_OFFSET, mr);
+++}
+++
++ static void dummy_fdc_tc(void *opaque, int irq, int level)
++ {
++ }
++@@ -1213,6 +1309,9 @@ static void sun4m_hw_init(MachineState *machine)
++         /* That loop wakes a CPU when another queues work for it */
++         SPARC_CPU(cpus[i])->env.solaris_idle_mp = sun4m_solaris_smp_idle &&
++                                                   smp_cpus > 1;
+++        if (hwdef->mbus_mxcc && SPARC_CPU(cpus[i])->env.def.mxcc_version) {
+++            mxcc_mbus_init(SPARC_CPU(cpus[i]));
+++        }
++     }
++ 
++     /* Create and map RAM frontend */
++@@ -1788,6 +1887,12 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          * eight bits.
++          */
++         .esp_cfg2_mask = 0xdf,
+++        /*
+++         * Its boot PROM reads and writes the MXCC control register of the
+++         * module it runs on through the module's MBus space. The other
+++         * machines' boot PROMs and OSes use ASI 2 only.
+++         */
+++        .mbus_mxcc = true,
++         .max_mem = 0xf00000000ULL,
++     };
++ 
++diff --git a/hw/sparc/trace-events b/hw/sparc/trace-events
++index abc1cf3d..0883ecba 100644
++--- a/hw/sparc/trace-events
+++++ b/hw/sparc/trace-events
++@@ -3,6 +3,8 @@
++ # sun4m.c
++ sun4m_cpu_set_irq_raise(int level) "Raise CPU IRQ %d"
++ sun4m_cpu_set_irq_lower(int level) "Lower CPU IRQ %d"
+++sun4m_mxcc_mbus_read(uint64_t addr, unsigned size, uint64_t val) "MXCC reg[0x%"PRIx64"] size %u read 0x%"PRIx64
+++sun4m_mxcc_mbus_write(uint64_t addr, unsigned size, uint64_t val) "MXCC reg[0x%"PRIx64"] size %u write 0x%"PRIx64
++ 
++ # sun4m_dbri.c
++ sun4m_dbri_read(uint64_t addr, uint32_t val) "read reg[0x%"PRIx64"] = 0x%08x"
+diff --git a/debian/patches/wsh/0185-hw-scsi-esp-take-the-LUN-from-the-CDB-without-IDENTI.patch b/debian/patches/wsh/0185-hw-scsi-esp-take-the-LUN-from-the-CDB-without-IDENTI.patch
+new file mode 100644
+index 0000000..3c2abc0
+--- /dev/null
++++ b/debian/patches/wsh/0185-hw-scsi-esp-take-the-LUN-from-the-CDB-without-IDENTI.patch
+@@ -0,0 +1,170 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/scsi/esp: take the LUN from the CDB without IDENTIFY on
++ the SS-600MP
++
++The SS-600MP boot PROM's probe-scsi (and probe-scsi-all) listed every
++target eight times, Unit 0 to Unit 7, the disk and the CD-ROMs alike.
++It selects each target with Select without ATN, so with no IDENTIFY
++message, and asks each LUN with an INQUIRY that has the LUN in bits 7-5
++of the CDB's second byte, as SCSI-1 and CCS devices take it. QEMU's ESP
++kept the LUN of the last IDENTIFY (0 here), so every INQUIRY reached
++LUN 0 and each answered as the device.
++
++New sysbus-esp property cdb-lun (default off) and hwdef field
++esp_cdb_lun, set on the SS-600MP only: after a selection without ATN
++the ESP takes the LUN from the CDB, so an INQUIRY for a LUN the target
++doesn't have gets QEMU's "no such LUN" answer (peripheral qualifier 3).
++A selection with ATN takes the IDENTIFY's LUN as before. The other
++machines and the PCI am53c974 keep the old behaviour. SunOS 4.1.2's esp
++driver selects with ATN. Trace event esp_cdb_lun; the flag lives only
++from the selection to the command phase, no new state.
++
++With it probe-scsi lists target 2 and 6 (CD-ROMs) and target 3 (disk),
++Unit 0 each.
++---
++ hw/scsi/esp.c         | 20 ++++++++++++++++++++
++ hw/scsi/trace-events  |  1 +
++ hw/sparc/sun4m.c      | 16 ++++++++++++++--
++ include/hw/scsi/esp.h |  3 +++
++ 4 files changed, 38 insertions(+), 2 deletions(-)
++
++diff --git a/hw/scsi/esp.c b/hw/scsi/esp.c
++index 7be17b07..c05b653b 100644
++--- a/hw/scsi/esp.c
+++++ b/hw/scsi/esp.c
++@@ -347,6 +347,18 @@ static void do_command_phase(ESPState *s)
++     }
++     fifo8_pop_buf(&s->cmdfifo, buf, cmdlen);
++ 
+++    if (s->lun_from_cdb && cmdlen > 1) {
+++        /*
+++         * Selected without ATN, so without an IDENTIFY message: the
+++         * target takes the LUN from bits 7-5 of the CDB's second byte, as
+++         * SCSI-1 and CCS devices do. The LUN of the last IDENTIFY used to
+++         * stay, so every LUN reached LUN 0.
+++         */
+++        s->lun = buf[1] >> 5;
+++        trace_esp_cdb_lun(s->lun);
+++    }
+++    s->lun_from_cdb = false;
+++
++     current_lun = scsi_device_find(&s->bus, 0, s->current_dev->id, s->lun);
++     if (!current_lun) {
++         /* No such drive */
++@@ -437,6 +449,7 @@ static void handle_s_without_atn(ESPState *s)
++ 
++     esp_set_phase(s, STAT_CD);
++     s->cmdfifo_cdb_offset = 0;
+++    s->lun_from_cdb = s->cdb_lun;
++ 
++     if (s->dma) {
++         esp_do_dma(s);
++@@ -1734,6 +1747,7 @@ static void sysbus_esp_realize(DeviceState *dev, Error **errp)
++     s->irq_latency_ns = (int64_t)sysbus->irq_latency_us * SCALE_US;
++     s->cfg2_mask = sysbus->cfg2_mask;
++     s->target_test = sysbus->target_test;
+++    s->cdb_lun = sysbus->cdb_lun;
++ 
++     s->chip_id = TCHI_FAS100A;
++     memory_region_init_io(&sysbus->iomem, OBJECT(sysbus), &sysbus_esp_mem_ops,
++@@ -1777,6 +1791,12 @@ static const Property sysbus_esp_properties[] = {
++      * those commands are illegal as before.
++      */
++     DEFINE_PROP_BOOL("target-test", SysBusESPState, target_test, false),
+++    /*
+++     * Select without ATN sends no IDENTIFY message, and the target takes
+++     * the LUN from the CDB, as the SS-600MP's boot PROM expects when it
+++     * probes each LUN; off, the LUN of the last IDENTIFY stays.
+++     */
+++    DEFINE_PROP_BOOL("cdb-lun", SysBusESPState, cdb_lun, false),
++ };
++ 
++ static const VMStateDescription vmstate_sysbus_esp_scsi = {
++diff --git a/hw/scsi/trace-events b/hw/scsi/trace-events
++index e67b6170..f4619105 100644
++--- a/hw/scsi/trace-events
+++++ b/hw/scsi/trace-events
++@@ -171,6 +171,7 @@ esp_pdma_write(int size) "pDMA write %u bytes"
++ esp_get_cmd(uint32_t dmalen, int target) "len %d target %d"
++ esp_do_command_phase(uint8_t busid) "busid 0x%x"
++ esp_do_identify(uint8_t byte) "0x%x"
+++esp_cdb_lun(uint8_t lun) "no IDENTIFY, LUN %d from the CDB"
++ esp_handle_satn_stop(uint32_t cmdlen) "cmdlen %d"
++ esp_write_response(uint32_t status) "Transfer status (status=%d)"
++ esp_do_dma(uint32_t cmdlen, uint32_t len) "command len %d + %d"
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 7bf5fb61..dd2dead1 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -126,6 +126,7 @@ struct sun4m_hwdef {
++     bool sbus_bus_errors;       /* buserr-trap, SBus write errors (M-to-S) */
++     bool esp_dma_esc;           /* the SCSI DMA is the ESC gate array */
++     uint8_t esp_cfg2_mask;      /* if set: the bits the ESP's config 2 keeps */
+++    bool esp_cdb_lun;           /* no IDENTIFY: the ESP's LUN from the CDB */
++     bool mbus_mxcc;             /* an MXCC's registers in its MBus space */
++ };
++ 
++@@ -344,7 +345,8 @@ static void *sparc32_dma_init(hwaddr dma_base,
++                               hwaddr le_base, qemu_irq ledma_irq,
++                               hwaddr lebuffer_base, uint32_t le_rap_mask,
++                               bool le_am7990, bool esp_dma_esc,
++-                              uint8_t esp_cfg2_mask, MACAddr *mac)
+++                              uint8_t esp_cfg2_mask, bool esp_cdb_lun,
+++                              MACAddr *mac)
++ {
++     DeviceState *dma;
++     ESPDMADeviceState *espdma;
++@@ -388,6 +390,9 @@ static void *sparc32_dma_init(hwaddr dma_base,
++     if (esp_cfg2_mask) {
++         qdev_prop_set_uint8(DEVICE(esp), "cfg2-mask", esp_cfg2_mask);
++     }
+++    if (esp_cdb_lun) {
+++        qdev_prop_set_bit(DEVICE(esp), "cdb-lun", true);
+++    }
++     sysbus_realize_and_unref(SYS_BUS_DEVICE(dma), &error_fatal);
++     if (lebuffer_base) {
++         sysbus_mmio_map(SYS_BUS_DEVICE(dma), 1, lebuffer_base);
++@@ -1388,7 +1393,7 @@ static void sun4m_hw_init(MachineState *machine)
++                      hwdef->le_base, slavio_irq[16],
++                      hwdef->lebuffer_base, hwdef->le_rap_mask,
++                      hwdef->le_am7990, hwdef->esp_dma_esc,
++-                     hwdef->esp_cfg2_mask, &hostid);
+++                     hwdef->esp_cfg2_mask, hwdef->esp_cdb_lun, &hostid);
++ 
++     if (!graphic_width) {
++         graphic_width = 1024;
++@@ -1887,6 +1892,13 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          * eight bits.
++          */
++         .esp_cfg2_mask = 0xdf,
+++        /*
+++         * Its boot PROM's probe-scsi selects each target without ATN, so
+++         * without an IDENTIFY message, and asks each LUN with an INQUIRY
+++         * that has the LUN in its CDB. The other machines keep the LUN
+++         * of the last IDENTIFY, as before.
+++         */
+++        .esp_cdb_lun = true,
++         /*
++          * Its boot PROM reads and writes the MXCC control register of the
++          * module it runs on through the module's MBus space. The other
++diff --git a/include/hw/scsi/esp.h b/include/hw/scsi/esp.h
++index 71eabbb6..63601e50 100644
++--- a/include/hw/scsi/esp.h
+++++ b/include/hw/scsi/esp.h
++@@ -38,6 +38,8 @@ struct ESPState {
++     uint8_t chip_id;
++     uint8_t cfg2_mask;      /* the bits configuration register 2 keeps */
++     bool target_test;       /* target data commands in chip test mode */
+++    bool cdb_lun;           /* no IDENTIFY: the LUN from the CDB */
+++    bool lun_from_cdb;      /* this selection had no IDENTIFY */
++     bool tchi_written;
++     int32_t ti_size;
++     uint32_t status;
++@@ -91,6 +93,7 @@ struct SysBusESPState {
++     uint32_t irq_latency_us;
++     uint8_t cfg2_mask;
++     bool target_test;
+++    bool cdb_lun;
++     ESPState esp;
++ };
++ 
+diff --git a/debian/patches/wsh/0186-hw-sparc-sun4m-give-the-SS-600MP-s-audio-chip-regist.patch b/debian/patches/wsh/0186-hw-sparc-sun4m-give-the-SS-600MP-s-audio-chip-regist.patch
+new file mode 100644
+index 0000000..0fd7111
+--- /dev/null
++++ b/debian/patches/wsh/0186-hw-sparc-sun4m-give-the-SS-600MP-s-audio-chip-regist.patch
+@@ -0,0 +1,59 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/sparc/sun4m: give the SS-600MP's audio chip registers that
++ read 0
++
++Booted from the SS-600MP boot PROM ("boot disk"), SunOS 4.1.2 loaded
++and ran its kernel and panicked after "zs1 at obio 0x0" with BAD TRAP
++type 0x29 (data access error): its audio driver attaches to the PROM's
++"audio" node at obio 0x500000 (reg 0x8 bytes, an AMD 79C30) and writes
++the chip's command and data registers, where QEMU had nothing. OpenBIOS
++makes no such node, so under OpenBIOS the driver never attached.
++
++New hwdef field amd_audio_base, set on the SS-600MP only: an
++unimplemented device "sun-audio" over the chip's eight byte registers
++(reads 0, writes ignored, LOG_UNIMP). No model of the chip; the other
++machines are unchanged.
++
++With it SunOS 4.1.2 attaches audio0 and boots from the PROM to its
++login prompt.
++---
++ hw/sparc/sun4m.c | 12 ++++++++++++
++ 1 file changed, 12 insertions(+)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index dd2dead1..3bacb26a 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -106,6 +106,7 @@ struct sun4m_hwdef {
++     hwaddr tcx_base, cs_base, apc_base, aux1_base, aux2_base;
++     hwaddr bpp_base, dbri_base, sx_base, cg6_base;
++     hwaddr vme_base, lebuffer_base;
+++    hwaddr amd_audio_base;      /* if set: the AMD 79C30's 8 registers */
++     struct {
++         hwaddr reg_base, vram_base;
++     } vsimm[MAX_VSIMMS];
++@@ -1595,6 +1596,10 @@ static void sun4m_hw_init(MachineState *machine)
++         create_unimplemented_device("sun-cgsix", hwdef->cg6_base, 0x1000000);
++     }
++ 
+++    if (hwdef->amd_audio_base) {
+++        create_unimplemented_device("sun-audio", hwdef->amd_audio_base, 8);
+++    }
+++
++     if (hwdef->vme_base) {
++         /*
++          * The SPARCserver 600MP's VMEbus interface registers (control,
++@@ -1821,6 +1826,13 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++         .ecc_version  = 0x00000000, /* version 0, implementation 0 */
++         .vme_base     = 0xfdf010000ULL,
++         .lebuffer_base = 0xef0040000ULL,
+++        /*
+++         * Its boot PROM has an "audio" node at obio 0x500000 (an AMD
+++         * 79C30, eight byte registers), and SunOS 4.1.2's audio driver
+++         * attaches to it and writes the chip's registers; QEMU has no
+++         * model of the chip. OpenBIOS makes no such node.
+++         */
+++        .amd_audio_base = 0xff1500000ULL,
++         .nvram_machine_id = 0x71,
++         .machine_id = ss600mp_id,
++         /*
+diff --git a/debian/patches/wsh/0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers-.patch b/debian/patches/wsh/0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers-.patch
+new file mode 100644
+index 0000000..79e0c73
+--- /dev/null
++++ b/debian/patches/wsh/0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers-.patch
+@@ -0,0 +1,216 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP's MXCC MBus registers, CDB LUN
++ and audio
++
++sun4m-ss600mp-test cases for the previous three patches:
++
++- mxcc-mbus: the mxcc-mbus regions of module IDs 8 and 9 with -smp 2,
++  each port address register with its module ID, the PROM's read of the
++  control register and its write of E$ enable, the low word of the
++  doubleword at 0xa00, module 9's register left alone; no region with
++  TI-SuperSparc-50 or on the SS-10. Fails without the first patch.
++- esp-cdb-lun: an INQUIRY by programmed I/O after Select without ATN,
++  as probe-scsi asks it: LUN 0 of a disk answers as a direct access
++  device, LUNs 1-7 answer 0x7f; the SS-10's ESP still answers LUN 1 as
++  LUN 0. Fails without the second patch.
++- audio-regs: the sun-audio region at 0xf.f150_0000 (8 bytes), the
++  driver's first writes, reads of 0; none on the SS-10. Fails without
++  the third patch.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 162 +++++++++++++++++++++++++++++++
++ 1 file changed, 162 insertions(+)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index 88fee435..32b1c7ab 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -52,6 +52,22 @@
++  * puts the first byte on the bus and keeps the rest in its FIFO. The
++  * SS-10's ESP takes the command as illegal.
++  *
+++ * A SuperSPARC module with an MXCC answers in its MBus module space, 16 MB
+++ * at 0xf.f000_0000 + (module ID << 24): the boot PROM reads and writes
+++ * the MXCC control register of the module it runs on at 0xf.f8c0_0a04.
+++ * Each module has its own; a module without an MXCC and the SS-10 have
+++ * none there.
+++ *
+++ * The boot PROM's probe-scsi selects each target without ATN, so without
+++ * an IDENTIFY message, and asks each LUN with an INQUIRY that has the LUN
+++ * in its CDB: the target answers for that LUN, so a disk with only LUN 0
+++ * answers "no such LUN" for the others. The SS-10's ESP keeps the LUN of
+++ * the last IDENTIFY, as before.
+++ *
+++ * The boot PROM has an audio node (an AMD 79C30) at obio 0x500000, and
+++ * SunOS 4.1.2's audio driver writes its eight byte registers: they read 0
+++ * and ignore writes. The SS-10 has nothing there.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -99,6 +115,21 @@
++ #define ESC_RESET       0x00000080
++ #define ESC_ENDVMA      0x00000200
++ #define ESC_TCZERO      0x00001000
+++#define ESP_WBUSID      0x4
+++#define ESP_RINTR       0x5
+++#define ESP_FLUSH       0x01
+++#define ESP_SELNATN     0x41
+++#define ESP_TI          0x10
+++#define ESP_ICCS        0x11
+++#define ESP_MSGACC      0x12
+++#define ESP_STAT_PHASE  0x07
+++#define ESP_STAT_DI     0x01
+++#define INQ_NO_LUN      0x7f            /* peripheral qualifier 3, type 0x1f */
+++/* module ID n's MBus space, and the MXCC's registers in it */
+++#define MXCC_MBUS(mid)  (0xff0000000ULL + ((uint64_t)(mid) << 24) + 0xc00000)
+++#define MXCC_CNTL       0xa04
+++#define MXCC_PORT       0xf04
+++#define MXCC_CE         0x04            /* E$ enable */
++ #define IOMMU_CTRL      0xfe0000000ULL
++ /* the system interrupt pending register of the slavio interrupt controller */
++ #define INTCTL_PENDING  0xff1410000ULL
++@@ -633,6 +664,134 @@ static void test_esp_dma_read(void)
++     qtest_quit(qts);
++ }
++ 
+++static void test_mxcc_mbus(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64 -smp 2");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++    uint32_t cntl8, cntl9;
+++
+++    g_assert_true(has_region(mtree, "0000000ff8c00000-0000000ff8c00fff "
+++                             "(prio 0, i/o): mxcc-mbus"));
+++    g_assert_true(has_region(mtree, "0000000ff9c00000-0000000ff9c00fff "
+++                             "(prio 0, i/o): mxcc-mbus"));
+++    /* each module's port address register has its module ID */
+++    g_assert_cmphex(qtest_readl(qts, MXCC_MBUS(8) + MXCC_PORT) >> 24 & 0xf,
+++                    ==, 8);
+++    g_assert_cmphex(qtest_readl(qts, MXCC_MBUS(9) + MXCC_PORT) >> 24 & 0xf,
+++                    ==, 9);
+++    /* as the PROM does it: read the control register, set E$ enable */
+++    cntl8 = qtest_readl(qts, MXCC_MBUS(8) + MXCC_CNTL);
+++    cntl9 = qtest_readl(qts, MXCC_MBUS(9) + MXCC_CNTL);
+++    qtest_writel(qts, MXCC_MBUS(8) + MXCC_CNTL, cntl8 | MXCC_CE);
+++    g_assert_cmphex(qtest_readl(qts, MXCC_MBUS(8) + MXCC_CNTL), ==,
+++                    cntl8 | MXCC_CE);
+++    /* the low word of the doubleword at 0xa00, as through ASI 2 */
+++    g_assert_cmphex(qtest_readq(qts, MXCC_MBUS(8) + MXCC_CNTL - 4) &
+++                    0xffffffff, ==, cntl8 | MXCC_CE);
+++    /* module 9 has its own */
+++    g_assert_cmphex(qtest_readl(qts, MXCC_MBUS(9) + MXCC_CNTL), ==, cntl9);
+++    qtest_quit(qts);
+++
+++    /* a SuperSPARC without an MXCC answers nothing there */
+++    qts = qtest_init("-machine SS-600MP -m 64 -cpu TI-SuperSparc-50");
+++    g_free(mtree);
+++    mtree = qtest_hmp(qts, "info mtree");
+++    g_assert_null(strstr(mtree, "mxcc-mbus"));
+++    qtest_quit(qts);
+++
+++    /* nor does the SS-10's */
+++    qts = qtest_init("-machine SS-10 -m 64");
+++    g_free(mtree);
+++    mtree = qtest_hmp(qts, "info mtree");
+++    g_assert_null(strstr(mtree, "mxcc-mbus"));
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * As probe-scsi asks: select the target without ATN, so without an
+++ * IDENTIFY message, with an INQUIRY for that LUN in the FIFO, by
+++ * programmed I/O; return the first byte of the answer
+++ */
+++static uint8_t inquiry_without_atn(QTestState *qts, uint64_t base,
+++                                   int target, int lun)
+++{
+++    const uint8_t cdb[6] = { 0x12, lun << 5, 0, 0, 5, 0 };
+++    uint8_t type;
+++    int i;
+++
+++    esp_writeb(qts, base, ESP_CMD, ESP_FLUSH);
+++    for (i = 0; i < ARRAY_SIZE(cdb); i++) {
+++        esp_writeb(qts, base, ESP_FIFO, cdb[i]);
+++    }
+++    esp_writeb(qts, base, ESP_WBUSID, target);
+++    esp_writeb(qts, base, ESP_CMD, ESP_SELNATN);
+++    g_assert_cmphex(esp_readb(qts, base, ESP_STAT) & ESP_STAT_PHASE, ==,
+++                    ESP_STAT_DI);
+++    esp_readb(qts, base, ESP_RINTR);
+++    /* a byte at a time without DMA */
+++    esp_writeb(qts, base, ESP_CMD, ESP_TI);
+++    esp_readb(qts, base, ESP_RINTR);
+++    g_assert_cmpuint(esp_readb(qts, base, ESP_FLAGS) & 0x1f, ==, 1);
+++    type = esp_readb(qts, base, ESP_FIFO);
+++    for (i = 1; i < 5; i++) {
+++        g_assert_cmphex(esp_readb(qts, base, ESP_STAT) & ESP_STAT_PHASE, ==,
+++                        ESP_STAT_DI);
+++        esp_writeb(qts, base, ESP_CMD, ESP_TI);
+++        esp_readb(qts, base, ESP_RINTR);
+++        esp_readb(qts, base, ESP_FIFO);
+++    }
+++    /* status and COMMAND COMPLETE, then bus free */
+++    esp_writeb(qts, base, ESP_CMD, ESP_ICCS);
+++    esp_readb(qts, base, ESP_RINTR);
+++    g_assert_cmphex(esp_readb(qts, base, ESP_FIFO), ==, 0);    /* GOOD */
+++    g_assert_cmphex(esp_readb(qts, base, ESP_FIFO), ==, 0);
+++    esp_writeb(qts, base, ESP_CMD, ESP_MSGACC);
+++    esp_readb(qts, base, ESP_RINTR);
+++    return type;
+++}
+++
+++static void test_esp_cdb_lun(void)
+++{
+++    const char *disk = "-nodefaults -m 64 "
+++                       "-drive if=scsi,unit=3,format=raw,file=null-co://";
+++    QTestState *qts = qtest_initf("-machine SS-600MP %s", disk);
+++    int lun;
+++
+++    /* LUN 0 is the disk (direct access), LUNs 1-7 aren't there */
+++    g_assert_cmphex(inquiry_without_atn(qts, ESP_REGS, 3, 0), ==, 0);
+++    for (lun = 1; lun < 8; lun++) {
+++        g_assert_cmphex(inquiry_without_atn(qts, ESP_REGS, 3, lun), ==,
+++                        INQ_NO_LUN);
+++    }
+++    g_assert_cmphex(inquiry_without_atn(qts, ESP_REGS, 3, 0), ==, 0);
+++    qtest_quit(qts);
+++
+++    /* the SS-10's ESP keeps LUN 0, the LUN of no IDENTIFY, as before */
+++    qts = qtest_initf("-machine SS-10 %s", disk);
+++    g_assert_cmphex(inquiry_without_atn(qts, SS10_ESP_REGS, 3, 1), ==, 0);
+++    qtest_quit(qts);
+++}
+++
+++static void test_audio_regs(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    g_autofree char *mtree = qtest_hmp(qts, "info mtree");
+++
+++    g_assert_true(has_region(mtree, "0000000ff1500000-0000000ff1500007 "
+++                             "(prio -1000, i/o): sun-audio"));
+++    /* the driver's first writes: an indirect register and its data */
+++    qtest_writeb(qts, 0xff1500000ULL, 0x21);
+++    qtest_writeb(qts, 0xff1500001ULL, 0x05);
+++    g_assert_cmphex(qtest_readb(qts, 0xff1500000ULL), ==, 0);
+++    qtest_quit(qts);
+++
+++    qts = qtest_init("-machine SS-10 -m 64");
+++    g_free(mtree);
+++    mtree = qtest_hmp(qts, "info mtree");
+++    g_assert_null(strstr(mtree, "sun-audio"));
+++    qtest_quit(qts);
+++}
+++
++ static void test_ss10_unchanged(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-10 -m 64");
++@@ -661,6 +820,9 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-ss600mp/esp-cfg2", test_esp_cfg2);
++     qtest_add_func("sun4m-ss600mp/esp-size-error", test_esp_size_error);
++     qtest_add_func("sun4m-ss600mp/esp-dma-read", test_esp_dma_read);
+++    qtest_add_func("sun4m-ss600mp/mxcc-mbus", test_mxcc_mbus);
+++    qtest_add_func("sun4m-ss600mp/esp-cdb-lun", test_esp_cdb_lun);
+++    qtest_add_func("sun4m-ss600mp/audio-regs", test_audio_regs);
 +     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
 + 
 +     return g_test_run();
