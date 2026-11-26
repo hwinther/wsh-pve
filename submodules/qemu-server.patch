@@ -204,7 +204,7 @@ index 29a4b8b3..4a63a963 100644
  
      return $statefile;
 diff --git a/src/PVE/QemuServer.pm b/src/PVE/QemuServer.pm
-index 1d665877..55584f0e 100644
+index 1d665877..7c1dcef6 100644
 --- a/src/PVE/QemuServer.pm
 +++ b/src/PVE/QemuServer.pm
 @@ -104,6 +104,7 @@ use PVE::QemuServer::USB;
@@ -970,7 +970,19 @@ index 1d665877..55584f0e 100644
      }
  
      if ($conf->{ivshmem}) {
-@@ -3975,7 +4345,7 @@ sub vm_deviceplug {
+@@ -3739,6 +4109,11 @@ sub config_to_command {
+ 
+     if (!$kvm) {
+         push @$machineFlags, 'accel=tcg';
++    } elsif (PVE::QemuServer::Helpers::is_qemu_3dfx_binary($kvm_binary)) {
++        # Without an accelerator, QEMU prefers KVM only when its program name ends in "kvm"
++        # (/usr/bin/kvm) and TCG otherwise, so the 3dfx binary would run in TCG. KVM was checked
++        # to be available above.
++        push @$machineFlags, 'accel=kvm';
+     }
+     my $power_state_flags =
+         PVE::QemuServer::Machine::get_power_state_flags($machine_conf, $arch, $version_guard);
+@@ -3975,7 +4350,7 @@ sub vm_deviceplug {
          return if !qemu_netdevadd($vmid, $conf, $arch, $device, $deviceid);
  
          my $machine_type = PVE::QemuServer::Machine::qemu_machine_pxe($vmid, $conf);
@@ -979,7 +991,7 @@ index 1d665877..55584f0e 100644
          my $use_old_bios_files = undef;
          ($use_old_bios_files, $machine_type) = qemu_use_old_bios_files($machine_type);
  
-@@ -4546,13 +4916,16 @@ sub vmconfig_hotplug_pending {
+@@ -4546,13 +4921,16 @@ sub vmconfig_hotplug_pending {
  
      my $hotplug_features =
          parse_hotplug_features(defined($conf->{hotplug}) ? $conf->{hotplug} : '1');
@@ -997,7 +1009,7 @@ index 1d665877..55584f0e 100644
          $usb_hotplug =
              $hotplug_features->{usb}
              && min_version($version, 7, 1)
-@@ -4619,7 +4992,8 @@ sub vmconfig_hotplug_pending {
+@@ -4619,7 +4997,8 @@ sub vmconfig_hotplug_pending {
                  );
              } elsif (is_valid_drivename($opt)) {
                  die "skip\n"
@@ -1007,7 +1019,7 @@ index 1d665877..55584f0e 100644
                  vm_deviceunplug($vmid, $conf, $opt);
                  vmconfig_delete_or_detach_drive($vmid, $storecfg, $conf, $opt, $force);
              } elsif ($opt =~ m/^memory$/) {
-@@ -4711,7 +5085,7 @@ sub vmconfig_hotplug_pending {
+@@ -4711,7 +5090,7 @@ sub vmconfig_hotplug_pending {
                      $machine_type->(),
                  );
              } elsif (is_valid_drivename($opt)) {
@@ -1016,7 +1028,7 @@ index 1d665877..55584f0e 100644
                  # some changes can be done without hotplug
                  my $drive = parse_drive($opt, $value);
                  if (drive_is_cloudinit($drive)) {
-@@ -4979,6 +5353,9 @@ sub vmconfig_update_net {
+@@ -4979,6 +5358,9 @@ sub vmconfig_update_net {
      if ($conf->{$opt}) {
          my $oldnet = PVE::QemuServer::Network::parse_net($conf->{$opt});
  
@@ -1026,7 +1038,7 @@ index 1d665877..55584f0e 100644
          if (
              safe_string_ne($oldnet->{model}, $newnet->{model})
              || safe_string_ne($oldnet->{macaddr}, $newnet->{macaddr})
-@@ -5060,6 +5437,8 @@ sub vmconfig_update_net {
+@@ -5060,6 +5442,8 @@ sub vmconfig_update_net {
          }
      }
  
@@ -1035,7 +1047,7 @@ index 1d665877..55584f0e 100644
      if ($hotplug) {
          PVE::Network::SDN::Vnets::add_next_free_cidr(
              $newnet->{bridge}, $conf->{name}, $newnet->{macaddr}, $vmid, undef, 1,
-@@ -5110,8 +5489,10 @@ sub vmconfig_update_disk {
+@@ -5110,8 +5494,10 @@ sub vmconfig_update_disk {
      my $drive = parse_drive($opt, $value);
  
      if ($conf->{$opt} && (my $old_drive = parse_drive($opt, $conf->{$opt}))) {
@@ -1048,7 +1060,7 @@ index 1d665877..55584f0e 100644
          die "unable to change media type\n" if $media ne $oldmedia;
  
          if (!drive_is_cdrom($old_drive)) {
-@@ -5195,6 +5576,11 @@ sub vmconfig_update_disk {
+@@ -5195,6 +5581,11 @@ sub vmconfig_update_disk {
              }
  
          } else { # cdrom
@@ -1060,7 +1072,7 @@ index 1d665877..55584f0e 100644
              eval { PVE::QemuServer::Blockdev::change_medium($storecfg, $vmid, $opt, $drive); };
              my $err = $@;
  
-@@ -5211,7 +5597,7 @@ sub vmconfig_update_disk {
+@@ -5211,7 +5602,7 @@ sub vmconfig_update_disk {
          }
      }
  
@@ -1069,7 +1081,7 @@ index 1d665877..55584f0e 100644
      # hotplug new disks
      PVE::Storage::activate_volumes($storecfg, [$drive->{file}]) if $drive->{file} !~ m|^/dev/.+|;
      vm_deviceplug($storecfg, $conf, $vmid, $opt, $drive, $arch, $machine_type);
-@@ -5608,6 +5994,25 @@ sub vm_start_nolock {
+@@ -5608,6 +5999,25 @@ sub vm_start_nolock {
          }
  
          push @$cmd, '-uuid', $uuid if defined($uuid);
@@ -1095,7 +1107,7 @@ index 1d665877..55584f0e 100644
      };
      if (my $err = $@) {
          eval { PVE::Storage::deactivate_volumes($storecfg, $vollist); };
-@@ -5722,6 +6127,9 @@ sub vm_start_nolock {
+@@ -5722,6 +6132,9 @@ sub vm_start_nolock {
              }
              close($tpm_writer);
  
@@ -1105,7 +1117,7 @@ index 1d665877..55584f0e 100644
              my $exitcode = run_command($cmd, %run_params);
              eval { PVE::QemuServer::Virtiofs::close_sockets(@$virtiofs_sockets); };
              log_warn("closing virtiofs sockets failed - $@") if $@;
-@@ -5927,7 +6335,11 @@ sub vm_start_nolock {
+@@ -5927,7 +6340,11 @@ sub vm_start_nolock {
          PVE::QemuServer::Network::add_nets_bridge_fdb($conf, $vmid);
      }
  
@@ -1118,7 +1130,7 @@ index 1d665877..55584f0e 100644
          eval {
              mon_cmd(
                  $vmid,
-@@ -6147,6 +6559,9 @@ sub vm_stop_cleanup {
+@@ -6147,6 +6564,9 @@ sub vm_stop_cleanup {
          # at this point, it should never be still running, so quiesce any warnings
          PVE::QemuServer::DBusVMState::qemu_del_dbus_vmstate($vmid, quiet => 1);
  
@@ -1128,7 +1140,7 @@ index 1d665877..55584f0e 100644
          if (!$keepActive) {
              my $vollist = get_vm_volumes($conf);
              PVE::Storage::deactivate_volumes($storecfg, $vollist);
-@@ -6695,7 +7110,7 @@ sub restore_update_config_line {
+@@ -6695,7 +7115,7 @@ sub restore_update_config_line {
      } elsif ($line =~ m/^(net\d+):\s*(\S+)\s*$/) {
          # a backup can have network devices without a MAC address
          $res .= "$1: " . PVE::QemuServer::Network::add_missing_mac($2) . "\n";
@@ -1137,7 +1149,7 @@ index 1d665877..55584f0e 100644
          my $virtdev = $1;
          my $value = $3;
          my $di = parse_drive($virtdev, $value);
-@@ -7088,8 +7503,12 @@ sub restore_proxmox_backup_archive {
+@@ -7088,8 +7508,12 @@ sub restore_proxmox_backup_archive {
              my $volid = $d->{volid};
              my $path = PVE::Storage::path($storecfg, $volid);
  
@@ -1152,7 +1164,7 @@ index 1d665877..55584f0e 100644
  
              my @ns_arg;
              if (defined(my $ns = $scfg->{namespace})) {
-@@ -7176,6 +7595,7 @@ sub restore_proxmox_backup_archive {
+@@ -7176,6 +7600,7 @@ sub restore_proxmox_backup_archive {
          # these special drives are already restored before start
          delete $devinfo->{'drive-efidisk0'};
          delete $devinfo->{'drive-tpmstate0-backup'};
@@ -1160,7 +1172,7 @@ index 1d665877..55584f0e 100644
  
          my $pbs_opts = {
              repo => $repo,
-@@ -7464,7 +7884,7 @@ sub live_import_from_files {
+@@ -7464,7 +7889,7 @@ sub live_import_from_files {
      my $sources_to_remove = [];
      for my $dev (keys %$mapping) {
          die "disk not support for live-restoring: '$dev'\n"
@@ -1169,7 +1181,7 @@ index 1d665877..55584f0e 100644
  
          die "mapping contains disk '$dev' which does not exist in the config\n"
              if !exists($conf->{$dev});
-@@ -8068,6 +8488,8 @@ sub clone_disk {
+@@ -8068,6 +8493,8 @@ sub clone_disk {
              if $src_drivename eq 'efidisk0' || $dst_drivename eq 'efidisk0';
          die "cloning from/to TPM state requires TPM state\n"
              if $src_drivename eq 'tpmstate0' || $dst_drivename eq 'tpmstate0';
@@ -1178,7 +1190,7 @@ index 1d665877..55584f0e 100644
  
          # This would lead to two device nodes in QEMU pointing to the same backing image!
          die "cannot change drive name when cloning disk from/to the same VM\n"
-@@ -8279,7 +8701,12 @@ sub bootorder_from_legacy {
+@@ -8279,7 +8706,12 @@ sub bootorder_from_legacy {
          sub {
              my ($ds, $drive) = @_;
  
@@ -1192,7 +1204,7 @@ index 1d665877..55584f0e 100644
                  if ($bootindex_hash->{d}) {
                      $bootorder->{$ds} = $bootindex_hash->{d};
                      $bootindex_hash->{d} += 1;
-@@ -8317,9 +8744,14 @@ sub get_default_bootdevices {
+@@ -8317,9 +8749,14 @@ sub get_default_bootdevices {
      my $first = PVE::QemuServer::Drive::resolve_first_disk($conf, 0);
      push @ret, $first if $first;
  
@@ -5558,7 +5570,7 @@ index 00000000..05d5b82b
 +vga: std,mesa=1,mesa-display=dbus,dbus-refresh=14
 diff --git a/src/test/cfg2cmd/vga-mesa-display-dbus.conf.cmd b/src/test/cfg2cmd/vga-mesa-display-dbus.conf.cmd
 new file mode 100644
-index 00000000..7e2dbe1f
+index 00000000..a820056e
 --- /dev/null
 +++ b/src/test/cfg2cmd/vga-mesa-display-dbus.conf.cmd
 @@ -0,0 +1,31 @@
@@ -5592,7 +5604,7 @@ index 00000000..7e2dbe1f
 +  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
 +  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
 +  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,bootindex=100,write-cache=on' \
-+  -machine 'type=pc+pve0'
++  -machine 'accel=kvm,type=pc+pve0'
 diff --git a/src/test/cfg2cmd/vga-mesa-display-egl-headless-cirrus.conf b/src/test/cfg2cmd/vga-mesa-display-egl-headless-cirrus.conf
 new file mode 100644
 index 00000000..004b1308
@@ -5613,7 +5625,7 @@ index 00000000..004b1308
 +vga: cirrus,mesa=1,mesa-display=egl-headless,retrace=precise
 diff --git a/src/test/cfg2cmd/vga-mesa-display-egl-headless-cirrus.conf.cmd b/src/test/cfg2cmd/vga-mesa-display-egl-headless-cirrus.conf.cmd
 new file mode 100644
-index 00000000..4721dee6
+index 00000000..608726a7
 --- /dev/null
 +++ b/src/test/cfg2cmd/vga-mesa-display-egl-headless-cirrus.conf.cmd
 @@ -0,0 +1,32 @@
@@ -5648,7 +5660,7 @@ index 00000000..4721dee6
 +  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
 +  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
 +  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,bootindex=100,write-cache=on' \
-+  -machine 'type=pc+pve0'
++  -machine 'accel=kvm,type=pc+pve0'
 diff --git a/src/test/cfg2cmd/vga-mesa-display-egl-headless.conf b/src/test/cfg2cmd/vga-mesa-display-egl-headless.conf
 new file mode 100644
 index 00000000..16760746
@@ -5669,7 +5681,7 @@ index 00000000..16760746
 +vga: std,mesa=1,mesa-display=egl-headless
 diff --git a/src/test/cfg2cmd/vga-mesa-display-egl-headless.conf.cmd b/src/test/cfg2cmd/vga-mesa-display-egl-headless.conf.cmd
 new file mode 100644
-index 00000000..bfc2e6aa
+index 00000000..e9370bdb
 --- /dev/null
 +++ b/src/test/cfg2cmd/vga-mesa-display-egl-headless.conf.cmd
 @@ -0,0 +1,31 @@
@@ -5703,7 +5715,7 @@ index 00000000..bfc2e6aa
 +  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
 +  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
 +  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,bootindex=100,write-cache=on' \
-+  -machine 'type=pc+pve0'
++  -machine 'accel=kvm,type=pc+pve0'
 diff --git a/src/test/cfg2cmd/vga-mesa-display-mesa0-error.conf b/src/test/cfg2cmd/vga-mesa-display-mesa0-error.conf
 new file mode 100644
 index 00000000..54ff59e6
@@ -5762,7 +5774,7 @@ index 00000000..7c053c8f
 +vga: std,mesa=1,mesa-display=none
 diff --git a/src/test/cfg2cmd/vga-mesa-display-none.conf.cmd b/src/test/cfg2cmd/vga-mesa-display-none.conf.cmd
 new file mode 100644
-index 00000000..9e619586
+index 00000000..2cc9d12f
 --- /dev/null
 +++ b/src/test/cfg2cmd/vga-mesa-display-none.conf.cmd
 @@ -0,0 +1,30 @@
@@ -5795,7 +5807,7 @@ index 00000000..9e619586
 +  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
 +  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
 +  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,bootindex=100,write-cache=on' \
-+  -machine 'type=pc+pve0'
++  -machine 'accel=kvm,type=pc+pve0'
 diff --git a/src/test/cfg2cmd/vga-mesa-display-serial-error.conf b/src/test/cfg2cmd/vga-mesa-display-serial-error.conf
 new file mode 100644
 index 00000000..b27d6f3d
@@ -5835,13 +5847,68 @@ index 00000000..bade96ae
 +tablet: 0
 +vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
 +vga: std,mesa=1,mesa-display=egl-headless,server=:0
+diff --git a/src/test/cfg2cmd/vga-mesa-kvm0.conf b/src/test/cfg2cmd/vga-mesa-kvm0.conf
+new file mode 100644
+index 00000000..433583b5
+--- /dev/null
++++ b/src/test/cfg2cmd/vga-mesa-kvm0.conf
+@@ -0,0 +1,13 @@
++# TEST: vga: mesa=1 with kvm: 0: the 3dfx binary in TCG (accel=tcg), as for any VM with KVM off
++balloon: 0
++kvm: 0
++boot: order=ide0
++cpu: pentium3
++ide0: local:8006/vm-8006-disk-0.raw,size=1G
++memory: 128
++name: win98
++ostype: other
++smbios1: uuid=7b10d7af-b932-4c66-b2c3-3996152ec465
++tablet: 0
++vmgenid: c773c261-d800-4348-9f5d-167fadd53cf8
++vga: std,mesa=1
+diff --git a/src/test/cfg2cmd/vga-mesa-kvm0.conf.cmd b/src/test/cfg2cmd/vga-mesa-kvm0.conf.cmd
+new file mode 100644
+index 00000000..95a4abd7
+--- /dev/null
++++ b/src/test/cfg2cmd/vga-mesa-kvm0.conf.cmd
+@@ -0,0 +1,30 @@
++/usr/bin/qemu-system-x86_64-3dfx \
++  -id 8006 \
++  -name win98 \
++  -no-shutdown \
++  -chardev 'socket,id=qmp,path=/var/run/qemu-server/8006.qmp,server=on,wait=off' \
++  -object 'monitor-qmp,chardev=qmp,id=monitor-qmp' \
++  -chardev 'socket,id=qmp-event,path=/var/run/qmeventd.sock,reconnect-ms=5000' \
++  -object 'monitor-qmp,chardev=qmp-event,id=monitor-qmp-event' \
++  -pidfile /var/run/qemu-server/8006.pid \
++  -daemonize \
++  -smbios 'type=1,uuid=7b10d7af-b932-4c66-b2c3-3996152ec465' \
++  -smp '1,sockets=1,cores=1,maxcpus=1' \
++  -nodefaults \
++  -boot 'menu=on,strict=on,reboot-timeout=1000,splash=/usr/share/qemu-server/bootsplash.jpg' \
++  -vnc 'unix:/var/run/qemu-server/8006.vnc,password=on' \
++  -cpu 'pentium3,vendor=GenuineIntel' \
++  -m 128 \
++  -object '{"id":"throttle-drive-ide0","limits":{},"qom-type":"throttle-group"}' \
++  -global 'PIIX4_PM.disable_s3=1' \
++  -global 'PIIX4_PM.disable_s4=1' \
++  -device 'pci-bridge,id=pci.1,chassis_nr=1,bus=pci.0,addr=0x1e' \
++  -device 'pci-bridge,id=pci.2,chassis_nr=2,bus=pci.0,addr=0x1f' \
++  -device 'pci-bridge,id=pci.4,chassis_nr=4,bus=pci.1,addr=0x1c' \
++  -device 'vmgenid,guid=c773c261-d800-4348-9f5d-167fadd53cf8' \
++  -device 'piix3-usb-uhci,id=uhci,bus=pci.0,addr=0x1.0x2' \
++  -device 'VGA,id=vga,bus=pci.0,addr=0x2' \
++  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
++  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
++  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,bootindex=100,write-cache=on' \
++  -machine 'accel=tcg,type=pc+pve0'
 diff --git a/src/test/cfg2cmd/vga-mesa.conf b/src/test/cfg2cmd/vga-mesa.conf
 new file mode 100644
-index 00000000..4ce90075
+index 00000000..e1770aa1
 --- /dev/null
 +++ b/src/test/cfg2cmd/vga-mesa.conf
 @@ -0,0 +1,12 @@
-+# TEST: vga: mesa=1 (3dfx/Mesa pass-through): the 3dfx binary, the VNC console and no -display (frames read back)
++# TEST: vga: mesa=1 (3dfx/Mesa pass-through): the 3dfx binary with accel=kvm (its name does not end in kvm, so QEMU would default to TCG), the VNC console and no -display (frames read back)
 +balloon: 0
 +boot: order=ide0
 +cpu: pentium3
@@ -5855,7 +5922,7 @@ index 00000000..4ce90075
 +vga: std,mesa=1
 diff --git a/src/test/cfg2cmd/vga-mesa.conf.cmd b/src/test/cfg2cmd/vga-mesa.conf.cmd
 new file mode 100644
-index 00000000..9e619586
+index 00000000..2cc9d12f
 --- /dev/null
 +++ b/src/test/cfg2cmd/vga-mesa.conf.cmd
 @@ -0,0 +1,30 @@
@@ -5888,7 +5955,7 @@ index 00000000..9e619586
 +  -iscsi 'initiator-name=iqn.1993-08.org.debian:01:aabbccddeeff' \
 +  -blockdev '{"detect-zeroes":"on","discard":"ignore","driver":"throttle","file":{"cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"raw","file":{"aio":"io_uring","cache":{"direct":true,"no-flush":false},"detect-zeroes":"on","discard":"ignore","driver":"file","filename":"/var/lib/vz/images/8006/vm-8006-disk-0.raw","node-name":"eb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"fb3b05af635e8f8f0286bc2ecf3f52e","read-only":false},"node-name":"drive-ide0","read-only":false,"throttle-group":"throttle-drive-ide0"}' \
 +  -device 'ide-hd,bus=ide.0,unit=0,drive=drive-ide0,id=ide0,bootindex=100,write-cache=on' \
-+  -machine 'type=pc+pve0'
++  -machine 'accel=kvm,type=pc+pve0'
 diff --git a/src/test/cfg2cmd/vga-retrace-cirrus.conf b/src/test/cfg2cmd/vga-retrace-cirrus.conf
 new file mode 100644
 index 00000000..168c8fc4
