@@ -2,7 +2,7 @@
 """The Glide and OpenGL pass-through of qemu-3dfx in a real Windows 98 SE guest, end to end.
 
     win98_test.py --template WIN98SE.raw --drivers qemu-3dfx-drivers-<rev>.zip --out OUT --private PRIV \\
-        [--tests glide2,glide3,opengl] [--display vnc|egl|sdl] [--accel auto|tcg|kvm] [--bench N]
+        [--tests glide2,glide3,opengl,opengl-ctx] [--display vnc|egl|sdl] [--accel auto|tcg|kvm] [--bench N]
 
 The operator's own installed Windows 98 SE disk (--template, raw, one FAT32 partition; never
 modified, never in the repository) is copied into PRIV, and onto the copy go, with mtools:
@@ -75,6 +75,9 @@ TESTS = {
     "glide2": ("GLIDE2", "GLIDETST.EXE", ""),
     "glide3": ("GLIDE3", "GLIDETST.EXE", "glide3"),
     "opengl": ("OPENGL", "GLTEST.EXE", ""),
+    # a second context while the first is current, the first deleted, then the pixel-store state and
+    # Windows' GLU32.DLL gluBuild2DMipmaps (a 1997 OpenGL game's switch from its intro to the game)
+    "opengl-ctx": ("GLCTX", "GLTEST.EXE", "ctx2=1"),
     # the demo (e2e/3dfx/demo, WSHDEMO.EXE -check -bench N -hold S), optional: --tests demo-glide2,...
     "demo-glide2": ("DEMOG2", "WSHDEMO.EXE", "-api glide2 -tag DEMOG2"),
     "demo-glide3": ("DEMOG3", "WSHDEMO.EXE", "-api glide3 -tag DEMOG3"),
@@ -91,7 +94,7 @@ DRIVERS = {
     "opengl32.dll": "WIN3DFX",
 }
 STARTUP = "WINDOWS/Start Menu/Programs/StartUp"
-LINE_RE = re.compile(r"^(W3DRUN|GLIDE2|GLIDE3|OPENGL|DEMOG2|DEMOG3|DEMOGL): (.*)$")
+LINE_RE = re.compile(r"^(W3DRUN|GLIDE2|GLIDE3|OPENGL|GLCTX|DEMOG2|DEMOG3|DEMOGL): (.*)$")
 
 
 def log(msg):
@@ -544,7 +547,7 @@ def select_tests(spec, display, binary):
     if GLIDE_OFFSCREEN_MARK in binary:
         tests += ["glide2", "glide3"]
     if MESA_OFFSCREEN_MARK in binary:
-        tests.append("opengl")
+        tests += ["opengl", "opengl-ctx"]
     return tests
 
 
@@ -1248,7 +1251,7 @@ def main(argv=None):
     ap.add_argument("--drivers", required=True, help="qemu-3dfx-drivers-<rev>.zip, or its unpacked directory")
     ap.add_argument("--out", required=True, help="logs and the summary (our own text only)")
     ap.add_argument("--private", required=True, help="the disk copy and the screendumps (stay on this host)")
-    ap.add_argument("--tests", default="auto", help="glide2, glide3, opengl, separated by commas; auto: those the "
+    ap.add_argument("--tests", default="auto", help="glide2, glide3, opengl, opengl-ctx, separated by commas; auto: those the "
                     "binary can show headless (opengl needs the Mesa offscreen display) or all with --display sdl; "
                     "the demo's demo-glide2, demo-glide3 and demo-opengl only when named")
     ap.add_argument("--display", choices=("vnc", "egl", "sdl"), default="vnc")

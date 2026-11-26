@@ -102,6 +102,7 @@ jobs:
             "submodule commit: ${QEMU3DFX_SHA}" \
             "revision (__REV__): ${QEMU3DFX_SHORT}-" \
             "built for i586 (-march=pentium, x87 math; no MMX, SSE or later)" \
+            "opengl32.dll: a second context made while one is current gets the window's context" \
             "" \
             "These Windows 9x/2000/ME guest drivers must match the host qemu-system" \
             "binary built from the same qemu-3dfx commit. The pve-qemu-kvm package" \

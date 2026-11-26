@@ -6,6 +6,14 @@ no CMOV, MMX or SSE): -march=pentium for MinGW and DJGPP (the DXEs, whose defaul
 Open Watcom (the OVL). Applied by `make 3dfx-drivers`, which reverts it afterwards and checks the
 result with scripts/check-3dfx-drivers-isa.sh.
 
+The OpenGL wrapper (opengl32.dll) also gives a game a context when it creates a second one while
+its first is current (a 1997 OpenGL game does, going from its intro to the game: create, make current,
+delete the old one). Upstream's wglCreateContext returned NULL then, after telling the host, which
+unbinds its context; the game went on without a context, its glGetIntegerv calls wrote nothing and
+Windows' GLU32.DLL divided by an unset GL_UNPACK_ALIGNMENT in gluBuild2DMipmaps (a divide error).
+The new context is the window's one context again, under the same handle, and the host is not told.
+e2e/3dfx/win98 tests it (opengl-ctx).
+
 diff --git a/wrappers/3dfx/drv/Makefile b/wrappers/3dfx/drv/Makefile
 index c7d12a0..5de73d9 100644
 --- a/wrappers/3dfx/drv/Makefile
@@ -71,3 +79,27 @@ index ca0f15e..f5c1a62 100644
  CFLAGS+=-pipe -I$(QEMU_SRC_DIR)/hw/mesa -I$(FXLIB) -Wall -Werror -fomit-frame-pointer
  CFLAGS+=-fuse-linker-plugin -flto=auto
  LDFLAGS=-static-libgcc
+diff --git a/wrappers/mesa/src/wrapgl32.c b/wrappers/mesa/src/wrapgl32.c
+index 9505a81..d04575e 100644
+--- a/wrappers/mesa/src/wrapgl32.c
++++ b/wrappers/mesa/src/wrapgl32.c
+@@ -17205,6 +17205,19 @@ mglCreateContext (uint32_t arg0)
+     if (currPixFmt == 0)
+         return 0;
+     i = arg0 & (MAX_PBUFFER - 1);
++    if (currGLRC && (arg0 != ((MESAGL_HPBDC & 0xFFFFFFF0U) | i))) {
++        /* A second context while one is current (a game switching contexts: create the new one,
++         * make it current, delete the old one). The host has one context for the window, so the
++         * new one is that context again, under the same handle: making it current rebinds it, and
++         * deleting the old one while it is current is ignored as before. Nothing goes to the host,
++         * whose wglCreateContext would unbind the current context; returning NULL instead left
++         * the game without a context and its GL calls without effect (glGetIntegerv wrote nothing,
++         * and GLU32's gluBuild2DMipmaps divided by an unset GL_UNPACK_ALIGNMENT). */
++        DPRINTF("CreateContext %x while current, the window's context again", arg0);
++        currDC = arg0;
++        GLwnd = WindowFromDC((HDC)arg0);
++        return MESAGL_MAGIC;
++    }
+     cntxDC[0] = arg0;
+     ptm[0xFFC >> 2] = MESAGL_MAGIC;
+     if (arg0 == ((MESAGL_HPBDC & 0xFFFFFFF0U) | i)) {
