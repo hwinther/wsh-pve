@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..2bf1bb7 100644
+index bc240a0..7e36e0f 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,125 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,127 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -199,6 +199,8 @@ index bc240a0..2bf1bb7 100644
 +wsh/0160-hw-sparc-sun4m-report-SS-600MP-SBus-store-errors-as.patch
 +wsh/0161-tests-qtest-test-SS-600MP-bus-errors-with-the-MMU-of.patch
 +wsh/0170-hw-audio-ac97-don-t-skip-a-buffer-when-CR-is-rewritt.patch
++wsh/0171-hw-dma-sparc32_dma-model-the-SS-600MP-s-SCSI-DMA-as-.patch
++wsh/0172-tests-qtest-test-the-SS-600MP-s-ESC-DMA-registers.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -25523,6 +25525,460 @@ index 0000000..468e6e3
 + }
 + 
 + libqos_init(ac97_register_nodes);
+diff --git a/debian/patches/wsh/0171-hw-dma-sparc32_dma-model-the-SS-600MP-s-SCSI-DMA-as-.patch b/debian/patches/wsh/0171-hw-dma-sparc32_dma-model-the-SS-600MP-s-SCSI-DMA-as-.patch
+new file mode 100644
+index 0000000..a3172d1
+--- /dev/null
++++ b/debian/patches/wsh/0171-hw-dma-sparc32_dma-model-the-SS-600MP-s-SCSI-DMA-as-.patch
+@@ -0,0 +1,292 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/dma/sparc32_dma: model the SS-600MP's SCSI DMA as the
++ ESC gate array
++
++Sun's SPARCserver 600MP boot PROM tests the on-board SCSI DMA's
++registers at slot f offset 0x81000 (progress 0xc3 of its power-on self
++test, a loop on error otherwise). The 600MP has the ESC gate array, not
++the DMA2 QEMU models (SunOS's dmaga.h and esp driver know it as device
++ID 4):
++
++- the control register reads ID 4 in bits 31-28, and a write keeps
++  bits 0x00042b90 (auto-drain, count interrupt enable, burst size, DMA
++  enable, write, reset, interrupt enable); the PROM writes a walking
++  one and wants exactly those back. QEMU read ID 0xa and kept more.
++- the byte count register keeps 24 bits (QEMU kept 32).
++- an address write sets no address-loaded bit (bit 26 is the DMA2's);
++  the PROM compares the whole control register.
++- a byte, halfword or doubleword access is answered with an error
++  acknowledge (the load traps with a bus error, the store is an M-to-S
++  write error, as for the lance's undecoded offsets) and sets the slave
++  size error bit (0x40), which the next read of the control register
++  returns and clears. The PROM makes each such access and then wants
++  the control register to read exactly ID 4 and that bit.
++
++New property esc on the sparc32 DMA devices (default off) and an hwdef
++field esp_dma_esc that only the SS-600MP sets, on its SCSI DMA. With
++the property off the registers and the access sizes are unchanged; the
++other machines keep the DMA2. SunOS's esp driver takes its ESC paths
++with ID 4 (it writes the count register, sets auto-drain and the burst
++size, skips the drain bit); nothing in them waits on a bit QEMU
++doesn't model. Trace event sparc32_dma_esc_size_error; no new state.
++---
++ hw/dma/sparc32_dma.c           | 96 +++++++++++++++++++++++++++++++---
++ hw/dma/trace-events            |  1 +
++ hw/sparc/sun4m.c               | 17 +++++-
++ include/hw/sparc/sparc32_dma.h |  6 +++
++ 4 files changed, 111 insertions(+), 9 deletions(-)
++
++diff --git a/hw/dma/sparc32_dma.c b/hw/dma/sparc32_dma.c
++index a06a44e..b82be30 100644
++--- a/hw/dma/sparc32_dma.c
+++++ b/hw/dma/sparc32_dma.c
++@@ -56,6 +56,7 @@
++ 
++ #define DMA_VER 0xa0000000
++ #define DMA_INTR 1
+++#define DMA_SLAVE_ERR 0x40
++ #define DMA_INTREN 0x10
++ #define DMA_WRITE_MEM 0x100
++ #define DMA_EN 0x200
++@@ -73,6 +74,18 @@
++ /* XXX SCSI and ethernet should have different read-only bit masks */
++ #define DMA_CSR_RO_MASK 0xfe000007
++ 
+++/*
+++ * The ESC gate array (device ID 4 in SunOS's dmaga.h): a write of its
+++ * control register keeps auto-drain, the count interrupt enable, the
+++ * burst size, DMA enable, write, reset and interrupt enable.
+++ * Its byte count register has 24 bits. It has no address-loaded bit
+++ * (that is the DMA2's), and an access other than a word sets the slave
+++ * size error bit, which a read of the control register clears.
+++ */
+++#define ESC_VER 0x40000000
+++#define ESC_CSR_WMASK 0x00042b90
+++#define ESC_COUNT_MASK 0x00ffffff
+++
++ enum {
++     GPIO_RESET = 0,
++     GPIO_DMA,
++@@ -243,13 +256,25 @@ static void dma_mem_write(void *opaque, hwaddr addr,
++             qemu_irq_lower(s->gpio[GPIO_DMA]);
++         }
++ 
+++        if (s->esc) {
+++            val &= ESC_CSR_WMASK;
+++            val |= ESC_VER;
+++            s->dmaregs[0] = (s->dmaregs[0] & ~ESC_CSR_WMASK) | val;
+++            break;
+++        }
++         val &= ~DMA_CSR_RO_MASK;
++         val |= DMA_VER;
++         s->dmaregs[0] = (s->dmaregs[0] & DMA_CSR_RO_MASK) | val;
++         break;
++     case 1:
++-        s->dmaregs[0] |= DMA_LOADED;
++-        /* fall through */
+++        if (!s->esc) {
+++            s->dmaregs[0] |= DMA_LOADED;
+++        }
+++        s->dmaregs[saddr] = val;
+++        break;
+++    case 2:
+++        s->dmaregs[saddr] = s->esc ? val & ESC_COUNT_MASK : val;
+++        break;
++     default:
++         s->dmaregs[saddr] = val;
++         break;
++@@ -266,12 +291,62 @@ static const MemoryRegionOps dma_mem_ops = {
++     },
++ };
++ 
+++/*
+++ * The ESC answers a byte, halfword or doubleword access with an error
+++ * acknowledge and sets the slave size error bit; a read of the control
+++ * register returns the bit and clears it.
+++ */
+++static MemTxResult esc_mem_read(void *opaque, hwaddr addr, uint64_t *data,
+++                                unsigned size, MemTxAttrs attrs)
+++{
+++    DMADeviceState *s = opaque;
+++
+++    if (size != 4) {
+++        s->dmaregs[0] |= DMA_SLAVE_ERR;
+++        trace_sparc32_dma_esc_size_error(addr, size);
+++        return MEMTX_ERROR;
+++    }
+++    *data = dma_mem_read(opaque, addr, size);
+++    if (((addr & DMA_MASK) >> 2) == 0) {
+++        s->dmaregs[0] &= ~DMA_SLAVE_ERR;
+++    }
+++    return MEMTX_OK;
+++}
+++
+++static MemTxResult esc_mem_write(void *opaque, hwaddr addr, uint64_t data,
+++                                 unsigned size, MemTxAttrs attrs)
+++{
+++    DMADeviceState *s = opaque;
+++
+++    if (size != 4) {
+++        s->dmaregs[0] |= DMA_SLAVE_ERR;
+++        trace_sparc32_dma_esc_size_error(addr, size);
+++        return MEMTX_ERROR;
+++    }
+++    dma_mem_write(opaque, addr, data, size);
+++    return MEMTX_OK;
+++}
+++
+++static const MemoryRegionOps esc_mem_ops = {
+++    .read_with_attrs = esc_mem_read,
+++    .write_with_attrs = esc_mem_write,
+++    .endianness = DEVICE_BIG_ENDIAN,
+++    .valid = {
+++        .min_access_size = 1,
+++        .max_access_size = 8,
+++    },
+++    .impl = {
+++        .min_access_size = 1,
+++        .max_access_size = 8,
+++    },
+++};
+++
++ static void sparc32_dma_device_reset(DeviceState *d)
++ {
++     DMADeviceState *s = SPARC32_DMA_DEVICE(d);
++ 
++     memset(s->dmaregs, 0, DMA_SIZE);
++-    s->dmaregs[0] = DMA_VER;
+++    s->dmaregs[0] = s->esc ? ESC_VER : DMA_VER;
++     if (object_dynamic_cast(OBJECT(d), TYPE_SPARC32_LEDMA_DEVICE)) {
++         s->dmaregs[3] = LEDMA_BASE_ADDR_RESET;
++     }
++@@ -306,12 +381,18 @@ static void sparc32_dma_device_init(Object *obj)
++     qdev_init_gpio_out(dev, s->gpio, 2);
++ }
++ 
+++static const Property sparc32_dma_device_properties[] = {
+++    /* the ESC gate array instead of the DMA2 (the SCSI DMA only) */
+++    DEFINE_PROP_BOOL("esc", DMADeviceState, esc, false),
+++};
+++
++ static void sparc32_dma_device_class_init(ObjectClass *klass, const void *data)
++ {
++     DeviceClass *dc = DEVICE_CLASS(klass);
++ 
++     device_class_set_legacy_reset(dc, sparc32_dma_device_reset);
++     dc->vmsd = &vmstate_sparc32_dma_device;
+++    device_class_set_props(dc, sparc32_dma_device_properties);
++ }
++ 
++ static const TypeInfo sparc32_dma_device_info = {
++@@ -325,21 +406,22 @@ static const TypeInfo sparc32_dma_device_info = {
++ 
++ static void sparc32_espdma_device_init(Object *obj)
++ {
++-    DMADeviceState *s = SPARC32_DMA_DEVICE(obj);
++     ESPDMADeviceState *es = SPARC32_ESPDMA_DEVICE(obj);
++ 
++-    memory_region_init_io(&s->iomem, OBJECT(s), &dma_mem_ops, s,
++-                          "espdma-mmio", DMA_SIZE);
++-
++     object_initialize_child(obj, "esp", &es->esp, TYPE_SYSBUS_ESP);
++ }
++ 
++ static void sparc32_espdma_device_realize(DeviceState *dev, Error **errp)
++ {
+++    DMADeviceState *s = SPARC32_DMA_DEVICE(dev);
++     ESPDMADeviceState *es = SPARC32_ESPDMA_DEVICE(dev);
++     SysBusESPState *sysbus = SYSBUS_ESP(&es->esp);
++     ESPState *esp = &sysbus->esp;
++ 
+++    memory_region_init_io(&s->iomem, OBJECT(s),
+++                          s->esc ? &esc_mem_ops : &dma_mem_ops, s,
+++                          "espdma-mmio", DMA_SIZE);
+++
++     esp->dma_memory_read = espdma_memory_read;
++     esp->dma_memory_write = espdma_memory_write;
++     esp->dma_opaque = SPARC32_DMA_DEVICE(dev);
++diff --git a/hw/dma/trace-events b/hw/dma/trace-events
++index 4c09790..1c4881d 100644
++--- a/hw/dma/trace-events
+++++ b/hw/dma/trace-events
++@@ -17,6 +17,7 @@ sparc32_dma_mem_readl(uint64_t addr, uint32_t ret) "read dmareg 0x%"PRIx64": 0x%
++ sparc32_dma_mem_writel(uint64_t addr, uint32_t old, uint32_t val) "write dmareg 0x%"PRIx64": 0x%08x -> 0x%08x"
++ sparc32_dma_enable_raise(void) "Raise DMA enable"
++ sparc32_dma_enable_lower(void) "Lower DMA enable"
+++sparc32_dma_esc_size_error(uint64_t addr, unsigned size) "ESC slave size error at 0x%"PRIx64" size %u"
++ 
++ # i8257.c
++ i8257_unregistered_dma(int nchan, int dma_pos, int dma_len) "unregistered DMA channel used nchan=%d dma_pos=%d dma_len=%d"
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index 39cef03..154cc55 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -120,6 +120,7 @@ struct sun4m_hwdef {
++     uint8_t nvram_machine_id;
++     bool timer_read_ahead;      /* a counter read moves on (slavio_timer) */
++     bool sbus_bus_errors;       /* buserr-trap, SBus write errors (M-to-S) */
+++    bool esp_dma_esc;           /* the SCSI DMA is the ESC gate array */
++ };
++ 
++ struct Sun4mMachineClass {
++@@ -333,7 +334,7 @@ static void *sparc32_dma_init(hwaddr dma_base,
++                               hwaddr esp_base, qemu_irq espdma_irq,
++                               hwaddr le_base, qemu_irq ledma_irq,
++                               hwaddr lebuffer_base, uint32_t le_rap_mask,
++-                              MACAddr *mac)
+++                              bool esp_dma_esc, MACAddr *mac)
++ {
++     DeviceState *dma;
++     ESPDMADeviceState *espdma;
++@@ -368,6 +369,9 @@ static void *sparc32_dma_init(hwaddr dma_base,
++     if (le_rap_mask) {
++         qdev_prop_set_uint32(DEVICE(lance), "rap-mask", le_rap_mask);
++     }
+++    if (esp_dma_esc) {
+++        qdev_prop_set_bit(DEVICE(espdma), "esc", true);
+++    }
++     sysbus_realize_and_unref(SYS_BUS_DEVICE(dma), &error_fatal);
++     if (lebuffer_base) {
++         sysbus_mmio_map(SYS_BUS_DEVICE(dma), 1, lebuffer_base);
++@@ -1186,7 +1190,8 @@ static void sun4m_hw_init(MachineState *machine)
++     sparc32_dma_init(hwdef->dma_base,
++                      hwdef->esp_base, slavio_irq[18],
++                      hwdef->le_base, slavio_irq[16],
++-                     hwdef->lebuffer_base, hwdef->le_rap_mask, &hostid);
+++                     hwdef->lebuffer_base, hwdef->le_rap_mask,
+++                     hwdef->esp_dma_esc, &hostid);
++ 
++     if (!graphic_width) {
++         graphic_width = 1024;
++@@ -1647,6 +1652,14 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          * (the drivers select only CSR0-CSR3 either way).
++          */
++         .le_rap_mask = 0x3,
+++        /*
+++         * Its on-board SCSI DMA is the ESC gate array (device ID 4, as
+++         * SunOS's esp driver knows it), not the DMA2: the boot PROM
+++         * writes a walking one to its registers, wants the ESC's bits
+++         * back, and wants a byte, halfword or doubleword access to trap
+++         * and set the slave size error bit.
+++         */
+++        .esp_dma_esc = true,
++         .max_mem = 0xf00000000ULL,
++     };
++ 
++diff --git a/include/hw/sparc/sparc32_dma.h b/include/hw/sparc/sparc32_dma.h
++index ccf2c74..83de7e5 100644
++--- a/include/hw/sparc/sparc32_dma.h
+++++ b/include/hw/sparc/sparc32_dma.h
++@@ -20,6 +20,12 @@ struct DMADeviceState {
++     qemu_irq irq;
++     void *iommu;
++     qemu_irq gpio[2];
+++    /*
+++     * The SCSI DMA is the ESC gate array (the SPARCserver 600MP's), not
+++     * the DMA2: another device ID and register bits, and a slave size
+++     * error for an access other than a word.
+++     */
+++    bool esc;
++ };
++ 
++ #define TYPE_SPARC32_ESPDMA_DEVICE "sparc32-espdma"
+diff --git a/debian/patches/wsh/0172-tests-qtest-test-the-SS-600MP-s-ESC-DMA-registers.patch b/debian/patches/wsh/0172-tests-qtest-test-the-SS-600MP-s-ESC-DMA-registers.patch
+new file mode 100644
+index 0000000..72542af
+--- /dev/null
++++ b/debian/patches/wsh/0172-tests-qtest-test-the-SS-600MP-s-ESC-DMA-registers.patch
+@@ -0,0 +1,150 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the SS-600MP's ESC DMA registers
++
++sun4m-ss600mp-test cases for the patch before:
++
++- dma-csr: the control register reads ID 4, keeps 0x00042b90 of a
++  walking one and of all ones, and the bits SunOS's esp attach writes.
++- dma-count: the address keeps all 32 bits and sets no address-loaded
++  bit, the byte count keeps 24; on the SS-10 the DMA2 still reads ID
++  0xa, keeps 0x01fffff8 of all ones and 32 bits of the count, and an
++  address write sets the address-loaded bit.
++- dma-size-error: a byte, halfword and doubleword load and a byte and
++  halfword store each set the slave size error bit, a read of the
++  control register clears it, the store goes nowhere and a word write
++  of the control register keeps the bit.
++
++8 cases in all; the three new ones fail without the patch before.
++---
++ tests/qtest/sun4m-ss600mp-test.c | 97 ++++++++++++++++++++++++++++++++
++ 1 file changed, 97 insertions(+)
++
++diff --git a/tests/qtest/sun4m-ss600mp-test.c b/tests/qtest/sun4m-ss600mp-test.c
++index 51cc072..1430290 100644
++--- a/tests/qtest/sun4m-ss600mp-test.c
+++++ b/tests/qtest/sun4m-ss600mp-test.c
++@@ -19,6 +19,13 @@
++  * the Am7990, whose boot PROM writes a walking one to it; the SS-10 keeps
++  * the PCnet core's bits 6-0.
++  *
+++ * The 600MP's on-board SCSI DMA is the ESC gate array: device ID 4 in
+++ * bits 31-28 of its control register, a write keeps bits 0x00042b90, the
+++ * byte count register keeps 24 bits, an address write sets no
+++ * address-loaded bit, and an access other than a word fails and sets the
+++ * slave size error bit, which a read of the control register clears.
+++ * The SS-10's DMA2 reads ID 0xa and keeps more bits.
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -32,6 +39,16 @@
++ #define LE_RDP          0xef0060000ULL
++ #define LE_RAP          0xef0060002ULL
++ #define SS10_LE_RAP     0xef0c00002ULL
+++#define DMA_CSR         0xef0081000ULL
+++#define DMA_ADDR        0xef0081004ULL
+++#define DMA_COUNT       0xef0081008ULL
+++#define SS10_DMA_CSR    0xef0400000ULL
+++#define SS10_DMA_ADDR   0xef0400004ULL
+++#define SS10_DMA_COUNT  0xef0400008ULL
+++#define ESC_ID          0x40000000
+++#define ESC_CSR_MASK    0x00042b90
+++#define DMA_SLAVE_ERR   0x00000040
+++#define DMA_A_LOADED    0x04000000
++ /* the system interrupt pending register of the slavio interrupt controller */
++ #define INTCTL_PENDING  0xff1410000ULL
++ #define IRQ_LE          (1u << 16)
++@@ -195,6 +212,83 @@ static void test_lance_rap(void)
++     qtest_quit(qts);
++ }
++ 
+++static void test_dma_csr(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++    uint32_t bit;
+++
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID);
+++    /* as the PROM does it: a walking one, then all ones */
+++    for (bit = 1; bit; bit <<= 1) {
+++        qtest_writel(qts, DMA_CSR, bit);
+++        g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==,
+++                        ESC_ID | (bit & ESC_CSR_MASK));
+++    }
+++    qtest_writel(qts, DMA_CSR, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | ESC_CSR_MASK);
+++    /* SunOS's esp attach clears the reset and write bits */
+++    qtest_writel(qts, DMA_CSR, ESC_CSR_MASK & ~0x180);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==,
+++                    ESC_ID | (ESC_CSR_MASK & ~0x180));
+++    qtest_writel(qts, DMA_CSR, 0);
+++    qtest_quit(qts);
+++}
+++
+++static void test_dma_count(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++
+++    /* the address keeps all 32 bits and sets no address-loaded bit */
+++    qtest_writel(qts, DMA_ADDR, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, DMA_ADDR), ==, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID);
+++    /* the byte count keeps 24 */
+++    qtest_writel(qts, DMA_COUNT, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, DMA_COUNT), ==, 0x00ffffff);
+++    qtest_writel(qts, DMA_COUNT, 0x01000000);
+++    g_assert_cmphex(qtest_readl(qts, DMA_COUNT), ==, 0);
+++    qtest_quit(qts);
+++
+++    /* the SS-10's DMA2: all 32 bits, and the address-loaded bit */
+++    qts = qtest_init("-machine SS-10 -m 64");
+++    g_assert_cmphex(qtest_readl(qts, SS10_DMA_CSR), ==, 0xa0000000);
+++    qtest_writel(qts, SS10_DMA_CSR, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, SS10_DMA_CSR), ==, 0xa1fffff8);
+++    qtest_writel(qts, SS10_DMA_COUNT, 0xffffffff);
+++    g_assert_cmphex(qtest_readl(qts, SS10_DMA_COUNT), ==, 0xffffffff);
+++    qtest_writel(qts, SS10_DMA_ADDR, 0x1000);
+++    g_assert_cmphex(qtest_readl(qts, SS10_DMA_CSR) & DMA_A_LOADED, ==,
+++                    DMA_A_LOADED);
+++    qtest_quit(qts);
+++}
+++
+++static void test_dma_size_error(void)
+++{
+++    QTestState *qts = qtest_init("-machine SS-600MP -m 64");
+++
+++    /* a byte, a halfword, a doubleword: each sets the bit, a read clears */
+++    qtest_readb(qts, DMA_COUNT);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID);
+++    qtest_readw(qts, DMA_ADDR);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    qtest_readq(qts, DMA_CSR);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    /* stores too, and the store goes nowhere */
+++    qtest_writel(qts, DMA_COUNT, 0x1234);
+++    qtest_writeb(qts, DMA_COUNT, 0xff);
+++    g_assert_cmphex(qtest_readl(qts, DMA_COUNT), ==, 0x1234);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | DMA_SLAVE_ERR);
+++    /* a write of the control register keeps it; reads of others too */
+++    qtest_writew(qts, DMA_CSR, 0);
+++    qtest_writel(qts, DMA_CSR, 0x10);
+++    qtest_readl(qts, DMA_ADDR);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==,
+++                    ESC_ID | DMA_SLAVE_ERR | 0x10);
+++    g_assert_cmphex(qtest_readl(qts, DMA_CSR), ==, ESC_ID | 0x10);
+++    qtest_quit(qts);
+++}
+++
++ static void test_ss10_unchanged(void)
++ {
++     QTestState *qts = qtest_init("-machine SS-10 -m 64");
++@@ -215,6 +309,9 @@ int main(int argc, char **argv)
++     qtest_add_func("sun4m-ss600mp/lebuffer-memory", test_lebuffer_memory);
++     qtest_add_func("sun4m-ss600mp/lance-in-lebuffer", test_lance_in_lebuffer);
++     qtest_add_func("sun4m-ss600mp/lance-rap", test_lance_rap);
+++    qtest_add_func("sun4m-ss600mp/dma-csr", test_dma_csr);
+++    qtest_add_func("sun4m-ss600mp/dma-count", test_dma_count);
+++    qtest_add_func("sun4m-ss600mp/dma-size-error", test_dma_size_error);
++     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
++ 
++     return g_test_run();
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
