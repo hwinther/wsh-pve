@@ -225,6 +225,10 @@ e2e/3dfx/dos-test.sh --out out -- --profiles emm386 --accel tcg  # harness optio
 e2e/3dfx/dos-test.sh --out out --pve wsh-pve-e2e                 # PVE starts the VM (qm create with floppy0, qm start)
 ```
 
+`-- --demo-res WxH` runs the demo at another resolution (`-res WxH`), for example `-- --profiles xms --demo-res 1600x1200`.
+
+The DJGPP build next to `GLIDEDOS.EXE` also makes `VBELIST.EXE` (`e2e/3dfx/dos/vbelist.c`), a tool for DOS guests that lists the video BIOS's VESA modes (INT 10h 4F00 and 4F01: the VBE version, the video memory, and per mode its size, depth, memory model, linear frame buffer and supported bit) on the screen and on COM1 (`-nocom`: the screen only). With `vga: std,memory=128` SeaVGABIOS offers its whole table, 82 VESA modes from 640x400 up to 5120x2160 at 32 bits, next to the 16 standard VGA modes.
+
 The `3dfx in DOS` workflow runs it on a GitHub-hosted runner for pull requests that touch the 3dfx tests or the qemu-3dfx pin, by hand and weekly. Results (November 2026, pve-qemu-kvm 11.1.3-4+wsh17, `qemu-3dfx-drivers-b94d988`, wsh-openglide 0.8, `cpu: pentium3`, 64 MB, Mesa's llvmpipe, read back, 300 frames of the test scene):
 
 | Memory managers | QEMU, KVM | QEMU, TCG | PVE (`qm start`, KVM) |
@@ -267,7 +271,7 @@ The `qemu-3dfx-drivers-<shortsha>` release has it: `wshdemo-<shortsha>.zip` with
 | --- | --- |
 | Space | next part |
 | G, Shift+G | gamma up, down (`grGammaCorrectionValue`, `guGammaCorrectionRGB` or `wglSetDeviceGammaRamp3DFX`) |
-| R | next resolution: 640x480, 800x600, 1024x768 |
+| R | next resolution the API can do (see `-res`), smallest first |
 | F | frame rate and graph on or off |
 | M | music off (muted) and on again |
 | Esc | quit; the desktop or the text screen comes back |
@@ -277,7 +281,8 @@ The `qemu-3dfx-drivers-<shortsha>` release has it: `wshdemo-<shortsha>.zip` with
 | `-bench N` | draw each part N frames without vsync, print `WSHDEMO: BENCH part=<name> frames=<n> secs=<s> fps=<f>` per part, quit |
 | `-check` | draw a fixed frame of each part (time 0, no animation), read it back (`grLfbReadRegion`, `glReadPixels`) and compare a few probe pixels, placed in flat areas, with the colours the part meant to draw (within 24 per channel, as the test scene); print `WSHDEMO: CHECK part=<name> PASS` or `FAIL <details>`; exit status 1 on a mismatch |
 | `-hold S` | after `-check` or `-bench`, keep the last frame up for S seconds; with `-check` it first prints that frame's probes (`WSHDEMO: PROBE x y rrggbb`) and `WSHDEMO: FRAME`, for a host that checks the console |
-| `-res WxH`, `-part NAME`, `-secs S`, `-time S`, `-gamma G`, `-nohud`, `-wait S`, `-tag NAME` | the start resolution, the first part (no title card), seconds per part, quitting after S seconds, the start gamma, no frame rate, a pause before the 3D display opens, the tag of the output lines |
+| `-res WxH` | the start resolution (640x480 by default). Glide 2 and Glide 3: 640x480, 856x480, 800x600, 960x720, 1024x768, 1280x1024 and 1600x1200, Glide's own modes up to `0xe` (Glide 3's larger ones, such as 1280x960 and 2048x1536, are refused by qemu-3dfx's `grSstWinOpen`); OpenGL: 640x480, 800x600, 1024x768, 1280x960, 1280x1024, 1600x1200 and 1920x1080. Another size is refused with the list the API can do; wshspace takes the same sizes |
+| `-part NAME`, `-secs S`, `-time S`, `-gamma G`, `-nohud`, `-wait S`, `-tag NAME` | the first part (no title card), seconds per part, quitting after S seconds, the start gamma, no frame rate, a pause before the 3D display opens, the tag of the output lines |
 | `-nosound` | no music: the sound device isn't opened |
 | `-audiotest` | play the audio signature (`e2e/wisp/audiosig.h`, 4 seconds of tones, as `wshspace -audiotest`) through the sound backend, open no display, print `WSHDEMO: AUDIOTEST rate=<hz> frames=<n> ...` and `PASS`, or `FAIL` without a sound device (exit status 1) |
 | `-nocom` | DOS: don't write to COM1 directly (for a batch file that has sent the console there with `CTTY COM1`) |
@@ -292,6 +297,8 @@ Measured in containers on a shared host without KVM (TCG, Mesa's llvmpipe, read 
 | FreeDOS, no memory manager | 138-150 | 30-33 | 67-74 | pass |
 | FreeDOS, HIMEMX | 127 | 34 | 77 | pass |
 | FreeDOS, HIMEMX and JEMM386 | 188 | 40 | 91 | pass |
+
+At the larger Glide resolutions every part passes `-check` from DOS too (640x480 up to 1600x1200, also 856x480 and 960x720, `dos-test.sh -- --demo-res WxH` and by hand); the read-back goes in strips of 256 KB, because the wrapper returns `grLfbReadRegion`'s pixels through its shared data area of about 2.7 MB, which a whole 1600x1200 frame would overrun. Frame rates (cube, tunnel, plasma, 300 frames each, FreeDOS with HIMEMX, KVM): in a container with Mesa's llvmpipe 239, 179, 182 at 1280x1024 and 146, 118, 119 at 1600x1200; in a PVE VM (`vga: std,memory=128,mesa=1,display=dbus`, the host's GPU) 1331, 774, 697 at 640x480, 564, 451, 388 at 1024x768, 364, 316, 277 at 1280x1024 and 254, 226, 171 at 1600x1200. wshspace's `-bench 300` there: 397 frames/s at 1024x768, 225 at 1600x1200.
 
 The tunnel is the slowest part: about 1500 triangles a frame, each `grDrawTriangle` a call through the FIFO. The Windows program hasn't been run in a Windows guest yet (Glide 2, Glide 3 and OpenGL through the wrappers are for the lab's Windows 98 harness). Its OpenGL part was run under Wine with Wine's own `OPENGL32.DLL` on the host's Mesa, not through the pass-through: it passes `-check` at all three resolutions there, which exercises the program's start-up without a C runtime, its WGL window and context, and the OpenGL backend.
 

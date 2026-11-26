@@ -734,7 +734,7 @@ static void part_title(double t, int check)
 	quad(&p0, &p1, &p2, &p3);
 	quad(&p3, &p2, &p4, &p5);
 	text_state();
-	int big = H >= 600 ? 6 : 5, sm = H >= 600 ? 3 : 2;
+	int big = H >= 1000 ? 10 : H >= 600 ? 6 : 5, sm = H >= 1000 ? 4 : H >= 600 ? 3 : 2;
 	text((W - text_width("WSHDEMO", big)) / 2, (float)(y - 4 * big), big, 0xffffffffU, "WSHDEMO");
 	char line[160];
 	const char *sub = "A 3D PASS-THROUGH TEST FOR QEMU-3DFX";
@@ -776,7 +776,7 @@ static int ft_pos;
 static double hud_fps;
 static void hud(const char *part, double gamma)
 {
-	float unit = demo_view.h >= 600 ? 2 : 1, x0 = 8 * unit, y0 = 8 * unit;
+	float unit = demo_view.h >= 1000 ? 3 : demo_view.h >= 600 ? 2 : 1, x0 = 8 * unit, y0 = 8 * unit;
 	state(-1, BLEND_ALPHA, 0, 0, 1, 0, 1);
 	rect(x0, y0, x0 + 150 * unit, y0 + 70 * unit, 0xa0000000U);
 	/* the graph: one bar a frame, 2 pixels wide, 1 pixel per ms (green to 20 ms, yellow to 34) */
@@ -921,7 +921,10 @@ static void run_bench(int frames)
 	}
 }
 
-static const int RES[3][2] = {{640, 480}, {800, 600}, {1024, 768}};
+/* The sizes -res and R offer, smallest first; each backend's res_ok says which it can open */
+static const int RES[][2] = {{640, 480}, {856, 480}, {800, 600}, {960, 720}, {1024, 768},
+			     {1280, 960}, {1280, 1024}, {1600, 1200}, {1920, 1080}};
+#define NRES (int)(sizeof(RES) / sizeof(RES[0]))
 static const double GAMMAS[] = {1.0, 1.2, 1.4, 1.7, 2.0, 0.8};
 #define NGAMMA 6
 
@@ -937,7 +940,7 @@ static int set_res(int w, int h)
 static int run_demo(int secs_per_part, int total_secs, int show_hud, int start_part, int sound)
 {
 	int part = start_part < 0 ? -1 : start_part, gi = 0, ri = 0;
-	for (int i = 0; i < 3; i++)
+	for (int i = 0; i < NRES; i++)
 		if (RES[i][0] == demo_view.w && RES[i][1] == demo_view.h)
 			ri = i;
 	uint32_t t_start = plat_us(), t_part = t_start, t_last = t_start, t_sec = t_start;
@@ -979,7 +982,7 @@ static int run_demo(int secs_per_part, int total_secs, int show_hud, int start_p
 		if (key == 'r' || key == 'R') {
 			int ow = demo_view.w, oh = demo_view.h, n = ri;
 			do
-				n = (n + 1) % 3;
+				n = (n + 1) % NRES;
 			while (n != ri && !be->res_ok(RES[n][0], RES[n][1]));
 			if (n != ri) {
 				be->close(0);
@@ -1034,7 +1037,8 @@ static void usage(void)
 		"  -bench N    draw each part N frames without vsync and print the frame rate",
 		"  -hold S     keep the last frame up for S seconds (after -check/-bench)",
 		"  -wait S     wait S seconds before opening the 3D display",
-		"  -res WxH    640x480 (default), 800x600 or 1024x768",
+		"  -res WxH    640x480 (default), 856x480, 800x600, 960x720, 1024x768, 1280x1024, 1600x1200 (Glide);",
+		"              640x480, 800x600, 1024x768, 1280x960, 1280x1024, 1600x1200, 1920x1080 (OpenGL)",
 		"  -time S     quit the interactive demo after S seconds; -secs S: seconds per part (10)",
 		"  -part NAME  start with cube, tunnel or plasma (skips the title card)",
 		"  -nosound    no music; -audiotest: play the audio signature (no display), PASS or FAIL",
@@ -1114,7 +1118,13 @@ int demo_main(int argc, char **argv, const struct backend *backend)
 	const char *mode = check && bench ? "check+bench" : check ? "check" : bench ? "bench" : "demo";
 	demo_log("START api=%s res=%dx%d mode=%s%s", be->api, w, h, mode, hold ? " hold" : "");
 	if (!be->res_ok(w, h)) {
-		demo_log("ERROR %s can't open %dx%d (640x480, 800x600 or 1024x768)", be->api, w, h);
+		char ok[160];
+		int len = 0;
+		ok[0] = 0;
+		for (int i = 0; i < NRES; i++)
+			if (be->res_ok(RES[i][0], RES[i][1]))
+				len += demo_fmt(ok + len, (int)sizeof(ok) - len, "%s%dx%d", len ? " " : "", RES[i][0], RES[i][1]);
+		demo_log("ERROR %s can't open %dx%d (it can: %s)", be->api, w, h, ok);
 		demo_log("CLOSED");
 		return 2;
 	}

@@ -34,7 +34,7 @@ static uint32_t tex_next, tex_max, context;
 static int inited;
 static char version[96];
 static uint16_t texbuf[256 * 256 * 4 / 3 + 1];
-static uint16_t lfb[1024 * 768];
+static uint16_t lfb[GLIDE_MAX_PIXELS];
 static int read_w, fog_n = 64;
 static float fog_start = -1, fog_end = -1;
 static uint32_t fog_rgb;
@@ -49,7 +49,7 @@ static int log2i(int v)
 
 static int g3_res_ok(int w, int h)
 {
-	return (w == 640 && h == 480) || (w == 800 && h == 600) || (w == 1024 && h == 768);
+	return glide_res(w, h) >= 0;
 }
 
 static int g3_open(int w, int h)
@@ -59,7 +59,7 @@ static int g3_open(int w, int h)
 		g3.grSstSelect(0);
 		inited = 1;
 	}
-	int res = w == 1024 ? GR_RESOLUTION_1024x768 : w == 800 ? GR_RESOLUTION_800x600 : GR_RESOLUTION_640x480;
+	int res = glide_res(w, h);
 	context = g3.grSstWinOpen(g3.hwnd, res, GR_REFRESH_60Hz, GR_COLORFORMAT_ARGB, GR_ORIGIN_UPPER_LEFT, 2, 1);
 	if (!context)
 		return -1;
@@ -199,8 +199,15 @@ static int g3_read(void)
 {
 	uint16_t px;
 	g3.grLfbReadRegion(GR_BUFFER_BACKBUFFER, 0, 0, 1, 1, 2, &px); /* drains the queued calls */
-	return g3.grLfbReadRegion(GR_BUFFER_BACKBUFFER, 0, 0, (uint32_t)demo_view.w, (uint32_t)demo_view.h,
-				  (uint32_t)demo_view.w * 2, lfb) != 0;
+	/* in strips of at most 256 KB: the wrapper returns the pixels through its shared data area,
+	 * which holds about 2.7 MB (a whole 1600x1200 frame would overrun it) */
+	int w = demo_view.w, rows = 131072 / w;
+	for (int y = 0; y < demo_view.h; y += rows) {
+		int n = demo_view.h - y < rows ? demo_view.h - y : rows;
+		if (!g3.grLfbReadRegion(GR_BUFFER_BACKBUFFER, 0, (uint32_t)y, (uint32_t)w, (uint32_t)n, (uint32_t)w * 2, lfb + y * w))
+			return 0;
+	}
+	return 1;
 }
 
 static void g3_pixel(int x, int y, uint8_t rgb[3])

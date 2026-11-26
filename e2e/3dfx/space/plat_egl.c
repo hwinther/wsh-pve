@@ -145,7 +145,7 @@ void glw_close(int final)
 }
 void glw_swap(int vsync)
 {
-	static uint8_t px[1024 * 768 * 4];
+	static uint8_t px[MAX_PIXELS * 4];
 	const char *dir = getenv("WSHSPACE_SHOTS");
 	(void)vsync;
 	int save = 0;

@@ -59,7 +59,11 @@ extern const struct backend glide2_backend;
 /* Glide 2 SDK constants (glide.h, sst1vid.h) */
 #define GR_RESOLUTION_640x480 0x7
 #define GR_RESOLUTION_800x600 0x8
+#define GR_RESOLUTION_960x720 0x9
+#define GR_RESOLUTION_856x480 0xa
 #define GR_RESOLUTION_1024x768 0xc
+#define GR_RESOLUTION_1280x1024 0xd
+#define GR_RESOLUTION_1600x1200 0xe
 #define GR_REFRESH_60Hz 0x0
 #define GR_COLORFORMAT_ARGB 0x0
 #define GR_ORIGIN_UPPER_LEFT 0x0
@@ -94,5 +98,12 @@ extern const struct backend glide2_backend;
 #define GR_FOG_WITH_TABLE 0x2 /* Glide 3: GR_FOG_WITH_TABLE_ON_Q, the same value */
 #define GR_CULL_DISABLE 0x0
 #define GR_WDEPTHVALUE_FARTHEST 0xffff
+
+/* The Glide resolution of a size, or -1. Glide 2's modes from 640x480 up: the 4:3 ones, 1280x1024
+ * and its one wide mode, 856x480. Glide 3 has more (1280x960, 2048x1536 and others, 0x10 and up),
+ * but qemu-3dfx's grSstWinOpen refuses anything above 0xf, so the Glide 3 backend uses this list
+ * too. The largest, 1600x1200, sizes the read-back buffers (GLIDE_MAX_PIXELS). */
+#define GLIDE_MAX_PIXELS (1600 * 1200)
+int glide_res(int w, int h); /* be_glide2.c (linked wherever be_glide3.c is) */
 
 #endif
