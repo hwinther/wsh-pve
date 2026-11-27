@@ -62,7 +62,7 @@ trap cleanup EXIT
 
 step "Build context"
 cp "$REPO"/e2e/streaming/Dockerfile "$REPO"/e2e/streaming/*.py "$REPO"/e2e/streaming/*.c "$REPO"/e2e/streaming/*.patch \
-	"$REPO"/e2e/streaming/wolf-input-bridge "$REPO"/e2e/streaming/wolf-pair "$REPO"/e2e/streaming/wolf-start "$REPO"/e2e/streaming/node.sh "$CTX/"
+	"$REPO"/e2e/streaming/wolf-input-bridge "$REPO"/e2e/streaming/wolf-pair "$REPO"/e2e/streaming/wolf-start "$REPO"/e2e/streaming/wsh-wolf.service "$REPO"/e2e/streaming/node.sh "$CTX/"
 cp "$REPO/proxmox-archive-keyring-trixie.gpg" "$CTX/"
 cp "$REPO/repo/conf/wsh-pve.gpg.key" "$CTX/"
 # qemu-server's bus policy, as wsh-dbus-display@<vmid> uses it (from the qemu-server patch)

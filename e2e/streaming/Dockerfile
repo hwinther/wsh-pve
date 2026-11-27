@@ -144,8 +144,10 @@ ENTRYPOINT ["/usr/local/bin/node.sh"]
 
 # A PVE container template for a node (docs: display reference, "Streaming to Moonlight"): Wolf,
 # the sources and the bridge, PulseAudio, x264 and GStreamer's nvcodec elements (NVENC, with the
-# node's NVIDIA libraries copied in), and the client for checks from inside the container, on
-# systemd. No QEMU: the VM runs on the node. `docker export` of this image is the template.
+# node's NVIDIA libraries copied in; libnvrtc12 from Debian's non-free, so that the CUDA elements
+# can scale on the GPU), and the client for checks from inside the container, on systemd, with
+# wsh-wolf.service (enabled by the first `wolf-start VMID ...`). No QEMU: the VM runs on the node.
+# `docker export` of this image is the template.
 FROM debian:trixie@sha256:9c6e381421d0f48d1b8133e573f33c185ee16cbf505eda9c4a8a4791b25ea8a6 AS ct
 ENV DEBIAN_FRONTEND=noninteractive
 COPY wsh-pve.gpg.key /tmp/wsh-pve.gpg.key
@@ -161,6 +163,9 @@ RUN apt-get update \
        libcurl4t64 libevdev2 libudev1 libpulse0 libunwind8 libdrm2 libpci3 libicu76 libssl3t64 \
        libopus0 libexpat1 libavahi-client3 libuuid1 libavcodec61 libavutil59 libswscale8 \
        libasound2t64 libsdl2-2.0-0 \
+    && sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update \
+    && apt-get install --no-install-recommends --assume-yes libnvrtc12 \
     && rm -rf /var/lib/apt/lists/* /tmp/wsh-pve.gpg.key \
     && groupadd --system wsh-display
 # as in node: a wsh-gst-qemu-dbus build from debs/, if there is one
@@ -175,4 +180,5 @@ COPY --from=wolf-build /out/ /
 COPY --from=wolf-build /src/wolf/src/moonlight-server/state/default/config.include.toml /usr/local/share/wolf/
 COPY --from=client-build /out/ /
 COPY --chmod=0755 wolf-input-bridge wolf-config.py wolf-pair wolf-start stream3d.py stream3dfx.py /usr/local/bin/
+COPY --chmod=0644 wsh-wolf.service /etc/systemd/system/
 RUN ldconfig && ! ldd /usr/local/bin/wolf /usr/local/bin/wsh-moonlight-probe | grep "not found"

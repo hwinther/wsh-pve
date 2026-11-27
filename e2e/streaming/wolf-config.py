@@ -15,20 +15,33 @@ the profiles are replaced by one profile, the one Moonlight clients see, with an
 The clients Wolf paired (its [[paired_clients]] in an existing OUT) are kept.
 
 Each app:
-  - video: qemudbussrc (the console as raw video), scaled to the client's size (stretched, so
-    a guest's mode changes fill the picture), a compositor that repeats the newest picture
-    at the client's frame rate (qemudbussrc sends a buffer per change), then Wolf's software
-    path:
-    I420, the client's colour settings, then the encoder Wolf picked (x264enc without a GPU)
-  - audio: qemudbusaudiosrc (the guest's -audiodev dbus playback, 48 kHz stereo)
+  - video: qemudbussrc (the console as raw video, reconnect=true: it follows the VM through a
+    stop and a start), scaled to the client's size (stretched by default, so a guest's mode
+    changes fill the picture), a compositor that repeats the newest picture at the client's
+    frame rate (qemudbussrc sends a buffer per change), then the client's colour settings and
+    the encoder
+  - audio: qemudbusaudiosrc (the guest's -audiodev dbus playback, 48 kHz stereo, reconnect=true)
   - runner: wolf-input-bridge for the same bus (Moonlight's keyboard and mouse into the guest),
     started with the session and stopped with it (with --log $BRIDGE_LOG if that is set)
-  - H264_ENCODER=nvenc: nvh264enc instead of the encoder Wolf picks (x264enc without a GPU)
-  - SRC_PROPS: more properties for qemudbussrc (e.g. render-node=/dev/dri/renderD128)
   - start_virtual_compositor and start_audio_server off: no Wayland compositor and no PulseAudio
+
+Environment:
+  H264_ENCODER  auto (default): the encoder Wolf picks (x264enc without a GPU), on I420 in system
+                memory; nvenc: nvh264enc with Wolf's NVENC settings
+  SCALER        where the picture is scaled to the client's size and converted for the encoder:
+                cuda: on the GPU (cudaupload of the guest's picture at its own size, then
+                cudacompositor scales and repeats it, cudaconvertscale makes NV12; needs
+                H264_ENCODER=nvenc and GStreamer's CUDA elements, which need NVIDIA's libnvrtc);
+                cpu: videoscale, compositor and videoconvertscale on the CPU;
+                auto (default): cuda with nvenc when the CUDA elements are there, else cpu
+  ASPECT        stretch (default): the picture fills the client's; keep: its aspect ratio is
+                kept, with black borders (a 4:3 guest on a 16:9 client)
+  SRC_PROPS     more properties for qemudbussrc (e.g. shared-map=false, render-node=...)
 """
 
 import os
+import shutil
+import subprocess
 import sys
 import tomllib
 
@@ -39,9 +52,21 @@ import tomllib
 # negotiated first and draws a smaller picture after a mode change (a Glide game's 640x480 after
 # a 1280x1024 desktop) unscaled in its top left corner, on its checkerboard
 REPEAT = (
-    "videoscale add-borders=false ! video/x-raw, width={width}, height={height}, pixel-aspect-ratio=1/1"
-    " ! compositor background=black ! video/x-raw, framerate={fps}/1"
+    "videoscale add-borders={borders} ! video/x-raw, width={{width}}, height={{height}},"
+    " pixel-aspect-ratio=1/1 ! compositor background=black ! video/x-raw, framerate={{fps}}/1"
 )
+
+# SCALER=cuda: only the guest's picture, at its own (often small) size, is copied to the GPU
+# (videoconvert passes it through unless cudaupload can't take its format, a 16-bit mode's
+# RGB16); cudacompositor scales it to the client's size (its pad's width and height, whatever
+# size comes in, so a mode change needs no renegotiation after it) and repeats the newest
+# picture at the client's frame rate, in CUDA memory, which nvh264enc takes as it is
+REPEAT_CUDA = (
+    "videoconvert ! cudaupload ! cudacompositor background=black sink_0::width={{width}}"
+    " sink_0::height={{height}}{sizing} ! video/x-raw(memory:CUDAMemory), width={{width}},"
+    " height={{height}}, framerate={{fps}}/1"
+)
+CUDA_ELEMENTS = ("cudaupload", "cudacompositor", "cudaconvertscale")
 
 # H264_ENCODER=nvenc: NVIDIA's encoder for these apps, on system-memory NV12. Wolf's
 # own NVENC pipeline isn't picked without cudaconvertscale, which needs the CUDA toolkit's runtime
@@ -56,6 +81,19 @@ VIDEO_PARAMS = (
     "videoconvertscale ! videorate ! video/x-raw, width={width}, height={height}, "
     "framerate={fps}/1, format=%s, chroma-site={color_range}, colorimetry={color_space}"
 )
+VIDEO_PARAMS_CUDA = (
+    "cudaconvertscale ! video/x-raw(memory:CUDAMemory), width={width}, height={height}, "
+    "format=NV12, chroma-site={color_range}, colorimetry={color_space}, pixel-aspect-ratio=1/1"
+)
+
+
+def have_elements(names):
+    """whether GStreamer has all these elements (the CUDA ones only when it found a GPU and
+    libnvrtc when it scanned its plugins)"""
+    if not shutil.which("gst-inspect-1.0"):
+        return False
+    return all(subprocess.run(["gst-inspect-1.0", "--exists", n], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL).returncode == 0 for n in names)
 
 
 def toml_str(s):
@@ -122,6 +160,30 @@ def main():
     if encoder != "auto" and encoder not in H264:
         print(f"H264_ENCODER={encoder}: auto or one of {', '.join(H264)}", file=sys.stderr)
         return 2
+    scaler = os.environ.get("SCALER") or "auto"
+    aspect = os.environ.get("ASPECT") or "stretch"
+    if scaler not in ("auto", "cuda", "cpu") or aspect not in ("stretch", "keep"):
+        print(f"SCALER={scaler} ASPECT={aspect}: SCALER is auto, cuda or cpu, ASPECT stretch or"
+              " keep", file=sys.stderr)
+        return 2
+    if scaler == "cuda" and encoder != "nvenc":
+        print("SCALER=cuda needs H264_ENCODER=nvenc", file=sys.stderr)
+        return 2
+    if scaler == "auto":
+        scaler = "cuda" if encoder == "nvenc" and have_elements(CUDA_ELEMENTS) else "cpu"
+    elif scaler == "cuda" and not have_elements(CUDA_ELEMENTS):
+        print(f"SCALER=cuda: GStreamer has no {', '.join(CUDA_ELEMENTS)} here (libnvrtc, the"
+              " GPU's devices?): the apps won't stream until it has", file=sys.stderr)
+    print(f"wolf-config.py: H264_ENCODER={encoder} SCALER={scaler} ASPECT={aspect}",
+          file=sys.stderr)
+    if scaler == "cuda":
+        repeat = REPEAT_CUDA.format(
+            sizing=" sink_0::sizing-policy=keep-aspect-ratio" if aspect == "keep" else "")
+        video_params = VIDEO_PARAMS_CUDA
+    else:
+        repeat = REPEAT.format(borders="true" if aspect == "keep" else "false")
+        # x264enc takes I420, nvh264enc NV12 (or RGB) in system memory
+        video_params = VIDEO_PARAMS % ("NV12" if encoder == "nvenc" else "I420")
     for spec in sys.argv[3:]:
         title, _, target = spec.partition("=")
         if target.isdigit():
@@ -139,13 +201,12 @@ def main():
             f"run_cmd = {toml_str('wolf-input-bridge --address ' + address + log)}",
             "",
             "[profiles.apps.video]",
-            f"source = {toml_str('qemudbussrc address=' + address + src_props + ' ! ' + REPEAT)}",
-            # x264enc takes I420, nvh264enc NV12 (or RGB) in system memory
-            f"video_params = {toml_str(VIDEO_PARAMS % ('NV12' if encoder == 'nvenc' else 'I420'))}",
+            f"source = {toml_str(f'qemudbussrc address={address} reconnect=true{src_props} ! {repeat}')}",
+            f"video_params = {toml_str(video_params)}",
             *([f"h264_encoder = {toml_str(H264[encoder])}"] if encoder != "auto" else []),
             "",
             "[profiles.apps.audio]",
-            f"source = {toml_str('qemudbusaudiosrc address=' + address)}",
+            f"source = {toml_str(f'qemudbusaudiosrc address={address} reconnect=true')}",
             "",
         ]
     out += keep

@@ -1,20 +1,136 @@
 #!/bin/sh
-# wolf-start VMID [VMID ...]: in the streaming container on a node (the Dockerfile's `ct`
-# template), start PulseAudio and Wolf with one Moonlight app per VM (wolf-config.py, which keeps
-# the clients paired so far). The node's /run/wsh-dbus-display is bind-mounted at BUS_DIR
-# (default /srv/wsh-dbus-display: the container's systemd mounts its own /run over a bind mount
-# there). Environment: H264_ENCODER (auto or nvenc, see wolf-config.py), BRIDGE_LOG, LOG (Wolf's
-# log, default /var/log/wolf.log), WOLF_LOG_LEVEL. A running Wolf is stopped first.
+# wolf-start VMID [VMID ...] | --exec | --stop: in the streaming container on a node (the
+# Dockerfile's `ct` template), start PulseAudio and Wolf with one Moonlight app per VM
+# (wolf-config.py, which keeps the clients paired so far). The node's /run/wsh-dbus-display is
+# bind-mounted at BUS_DIR (default /srv/wsh-dbus-display: the container's systemd mounts its own
+# /run over a bind mount there).
+#
+#   wolf-start VMID ...  With systemd (the container's init) and wsh-wolf.service installed: writes
+#                        the VMs and the settings below to /etc/default/wsh-wolf, enables the
+#                        unit (Wolf comes up with the container from then on) and restarts it.
+#                        Without systemd: stops a running Wolf and starts one in the background.
+#   --exec               The unit's ExecStart: the VMs from WOLF_VMIDS (its EnvironmentFile),
+#                        Wolf in the foreground (exec).
+#   --stop               Disables and stops the unit (or stops a background Wolf).
+#
+# Environment (saved in /etc/default/wsh-wolf with the VMs): H264_ENCODER (auto or nvenc),
+# SCALER (auto, cuda or cpu), ASPECT (stretch or keep), SRC_PROPS (all three: see wolf-config.py),
+# BRIDGE_LOG, WOLF_LOG_LEVEL. Not saved: LOG (Wolf's log, default /var/log/wolf.log; the unit
+# appends to that file), BUS_DIR.
+#
+# Wolf, asked to stop, sometimes doesn't exit (it crashed in its exit path on a node, and its
+# crash handler then hung); a Wolf that is still there after STOP_TIMEOUT seconds is killed
+# (SIGKILL; the unit's TimeoutStopSec does the same).
 set -eu
-[ $# -gt 0 ] || { echo "usage: wolf-start VMID [VMID ...]" >&2; exit 2; }
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 export XDG_RUNTIME_DIR=/run/wolf
 BUS_DIR=${BUS_DIR:-/srv/wsh-dbus-display}
 LOG=${LOG:-/var/log/wolf.log}
-mkdir -p "$XDG_RUNTIME_DIR" /etc/wolf/cfg
-if pkill -x wolf; then
-	while pgrep -x wolf > /dev/null; do sleep 0.2; done
+UNIT=wsh-wolf.service
+DEFAULTS=/etc/default/wsh-wolf
+STOP_TIMEOUT=${STOP_TIMEOUT:-15}
+SAVED="H264_ENCODER SCALER ASPECT SRC_PROPS BRIDGE_LOG WOLF_LOG_LEVEL"
+
+usage() {
+	echo "usage: wolf-start VMID [VMID ...] | --exec | --stop" >&2
+	exit 2
+}
+
+have_unit() {
+	[ -d /run/systemd/system ] && systemctl cat "$UNIT" > /dev/null 2>&1
+}
+
+# Wolf processes that still run (a zombie, killed but not reaped yet, doesn't count)
+wolf_running() {
+	pgrep -x -r D,R,S,T,t wolf > /dev/null
+}
+
+# a Wolf started in the background, without systemd: SIGTERM, then SIGKILL after STOP_TIMEOUT
+stop_background() {
+	pkill -x wolf || return 0
+	i=0
+	while wolf_running; do
+		if [ "$i" = $((STOP_TIMEOUT * 5)) ]; then
+			echo "wolf-start: Wolf didn't stop within $STOP_TIMEOUT s: killing it" >&2
+			pkill -KILL -x wolf || true
+		elif [ "$i" -gt $((STOP_TIMEOUT * 5 + 50)) ]; then
+			echo "wolf-start: Wolf is still there after SIGKILL" >&2
+			exit 1
+		fi
+		i=$((i + 1))
+		sleep 0.2
+	done
+}
+
+# until Wolf's log has "HTTP server listening" after byte OFFSET
+wait_ready() {
+	offset=$1
+	for _ in $(seq 100); do
+		if tail -c +"$((offset + 1))" "$LOG" 2> /dev/null | grep -q "HTTP server listening"; then
+			return 0
+		fi
+		sleep 0.2
+	done
+	return 1
+}
+
+log_size() {
+	if [ -f "$LOG" ]; then wc -c < "$LOG"; else echo 0; fi
+}
+
+# a value for the EnvironmentFile, in double quotes
+quote() {
+	printf '"%s"' "$(printf '%s' "$1" | sed 's/[\\"]/\\&/g')"
+}
+
+[ $# -gt 0 ] || usage
+case $1 in
+--stop)
+	if have_unit; then
+		systemctl disable --now "$UNIT"
+	else
+		stop_background
+	fi
+	exit 0
+	;;
+--exec)
+	mode="exec"
+	# shellcheck disable=SC2086 # WOLF_VMIDS is words
+	set -- ${WOLF_VMIDS:-}
+	[ $# -gt 0 ] || { echo "wolf-start: no VMs (WOLF_VMIDS in $DEFAULTS)" >&2; exit 2; }
+	;;
+-*) usage ;;
+*)
+	mode="start"
+	for vmid in "$@"; do
+		case $vmid in '' | *[!0-9]*) usage ;; esac
+	done
+	;;
+esac
+
+if [ "$mode" = start ] && have_unit; then
+	{
+		echo "# Written by wolf-start: the VMs Wolf streams (an app wsh-vm-<vmid> each) and its settings"
+		echo "WOLF_VMIDS=$(quote "$*")"
+		for name in $SAVED; do
+			eval "value=\${$name:-}"
+			[ -z "$value" ] || echo "$name=$(quote "$value")"
+		done
+	} > "$DEFAULTS.new"
+	mv "$DEFAULTS.new" "$DEFAULTS"
+	offset=$(log_size)
+	systemctl enable "$UNIT" > /dev/null 2>&1
+	systemctl restart "$UNIT"
+	if wait_ready "$offset"; then
+		echo "wolf-start: Wolf runs ($UNIT, log $LOG), VMs: $*"
+		exit 0
+	fi
+	echo "wolf-start: Wolf didn't start, see $LOG and systemctl status $UNIT" >&2
+	exit 1
 fi
+
+mkdir -p "$XDG_RUNTIME_DIR" /etc/wolf/cfg
+[ "$mode" = exec ] || stop_background
 # Wolf won't start without a PulseAudio server to connect to (its apps here don't use it)
 pulseaudio --check 2> /dev/null ||
 	pulseaudio --daemonize=yes --exit-idle-time=-1 --log-target=syslog || true
@@ -22,19 +138,33 @@ apps=
 for vmid in "$@"; do
 	apps="$apps wsh-vm-$vmid=unix:path=$BUS_DIR/$vmid.sock"
 done
+# GStreamer's CUDA elements (cudaupload, cudaconvertscale, cudacompositor: SCALER=cuda) compile
+# their kernels with NVIDIA's runtime compiler; Debian's libnvrtc12 has no libnvrtc.so link
+if [ -z "${GST_CUDA_NVRTC_LIBNAME:-}" ]; then
+	for lib in /usr/lib/x86_64-linux-gnu/libnvrtc.so.1[0-9]*; do
+		[ -e "$lib" ] || continue
+		case ${lib##*/} in libnvrtc.so.[0-9][0-9]) export GST_CUDA_NVRTC_LIBNAME="${lib##*/}" ;; esac
+	done
+fi
+# A registry of GStreamer's plugins that is made again at each boot: the CUDA elements are only
+# there when the GPU and libnvrtc were found at the scan, and a cached registry keeps what an
+# older scan found
+export GST_REGISTRY="$XDG_RUNTIME_DIR/gstreamer-registry.bin"
 # shellcheck disable=SC2086 # $apps is words without spaces
 wolf-config.py /usr/local/share/wolf/config.include.toml /etc/wolf/cfg/config.toml $apps
 export WOLF_CFG_FILE=/etc/wolf/cfg/config.toml WOLF_PRIVATE_KEY_FILE=/etc/wolf/cfg/key.pem \
 	WOLF_PRIVATE_CERT_FILE=/etc/wolf/cfg/cert.pem WOLF_USE_ZERO_COPY=FALSE \
-	WOLF_LOG_LEVEL=${WOLF_LOG_LEVEL:-INFO} WOLF_DOCKER_SOCKET=/nonexistent/docker.sock \
+	WOLF_LOG_LEVEL="${WOLF_LOG_LEVEL:-INFO}" WOLF_DOCKER_SOCKET=/nonexistent/docker.sock \
 	HOST_APPS_STATE_FOLDER=/etc/wolf
-nohup wolf > "$LOG" 2>&1 &
-for _ in $(seq 50); do
-	if grep -q "HTTP server listening" "$LOG"; then
-		echo "wolf-start: Wolf runs (log $LOG), apps:$apps"
-		exit 0
-	fi
-	sleep 0.2
-done
+if [ "$mode" = exec ]; then
+	echo "wolf-start: starting Wolf, apps:$apps"
+	exec wolf
+fi
+offset=$(log_size)
+nohup wolf >> "$LOG" 2>&1 &
+if wait_ready "$offset"; then
+	echo "wolf-start: Wolf runs (log $LOG), apps:$apps"
+	exit 0
+fi
 echo "wolf-start: Wolf didn't start, see $LOG" >&2
 exit 1
