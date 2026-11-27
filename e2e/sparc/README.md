@@ -2236,6 +2236,25 @@ Found on the way:
   writes the same timeouts into `/etc/systemd/system.conf.d/wsh-lab-tcg.conf`, for disks installed from now
   on (the stored disk predates it). Units with their own `TimeoutSec=90s` (`systemd-modules-load`,
   `systemd-journal-flush`) can still fail on a busy host; the boot gets past them.
+- **No backslash in a preseed answer:** the first install with that late command (the regression sweep of
+  2026-11-26) went back to debian-installer's main menu after GRUB instead of rebooting. The late command
+  wrote the drop-in with `printf '[Manager]\nDefault...'`. The early command's `debconf-set-selections`
+  runs under a cdebconf of its own (`preseed_command` starts one), which saves the answers to
+  `questions.dat` escaping only newlines; the installer's main cdebconf loads that file and turns each
+  `\n` into a newline. A debconf reply is one line, so `preseed_command` got the command cut at its first
+  newline (syslog: `running preseed command preseed/late_command: ... printf '[Manager]`, then
+  `log-output: syntax error: unterminated quoted string`), and the rest of the value was left in the reply
+  stream for the next debconf commands to read. None of the late command ran, root's password included;
+  finish-install failed and main-menu showed "Installation step failed". The late command now writes each
+  line of the drop-in with its own `echo`, and `preseed_ports()` refuses a late command with a backslash
+  (`tests/test_targets.py` checks the whole preseed file for one). Tested 2026-11-27 (pve-qemu-kvm
+  11.1.3-4+wsh37, qemu-server 9.2.24+wsh5, pve-manager 9.3.1+wsh1):
+
+  | Run | Result | Time |
+  | --- | --- | --- |
+  | `debian13-install-sparc64.py` with the lab's own QEMU, the old late command | "Installation step failed" after GRUB, as in the sweep | 148 min |
+  | the netinst booted with the answer CD, `preseed_command preseed/late_command` in the installer's shell, old and new late command | old: cut at `printf '[Manager]`, `syntax error: unterminated quoted string`; new: whole, no error | 4 min each |
+  | `install debian13-sun4u --vmid 9913 --check --gateway 10.0.2.2 --dns <a resolver>` (the PVE test container, `vmbr0` NATed out by hand) | passed; the installed disk has `/etc/systemd/system.conf.d/wsh-lab-tcg.conf` with both timeouts | 177.9 min (install 9972 s, first boot 359 s, check 328 s) |
 
 **In the matrix:** `matrix_skip` like Tribblix: neither the weekly install matrix (240 minutes) nor the
 monthly `--reinstall all` (720 minutes) installs it; it is installed on request (`pve_matrix.py install

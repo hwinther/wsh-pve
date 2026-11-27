@@ -936,7 +936,12 @@ GRUB went in (`Running "grub-install /dev/sda1"...`, `update-grub`, `Updating
 /etc/kernel-img.conf...` to 100%), but then the installer came back to its main menu instead of
 finishing and rebooting. The scenario took the main menu for a question box and stopped at
 10736 s, just under the phase's 10800 s limit (`AssertionError: debian-installer stopped at a
-question or an error (the last snapshot)`). Not investigated yet, and the target's stored disk
-was not boot-tested in this sweep. During the Web Start installs the lab host stopped answering
+question or an error (the last snapshot)`). The box was main-menu's "Installation step failed":
+finish-install had failed in the preseeded late command. That command (since 2026-11-24) wrote a
+systemd drop-in with `printf '[Manager]\n...'`, and debian-installer's cdebconf turns a `\n` in an
+answer loaded by the early command into a newline, so the command arrived cut at `printf
+'[Manager]` (`syntax error: unterminated quoted string` in the installer's syslog). Our bug, not
+debian-ports: the late command now has no backslash (wsh-pve `e2e/sparc/README.md`, "Debian 13 on
+sun4u"). The target's stored disk was not boot-tested in this sweep. During the Web Start installs the lab host stopped answering
 for about 25 minutes (afterwards with 1.9 GB of swap in use); the two installs running then passed
 anyway.
