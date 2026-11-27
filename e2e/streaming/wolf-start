@@ -120,7 +120,10 @@ if [ "$mode" = start ] && have_unit; then
 	mv "$DEFAULTS.new" "$DEFAULTS"
 	offset=$(log_size)
 	systemctl enable "$UNIT" > /dev/null 2>&1
-	systemctl restart "$UNIT"
+	# the unit's Wolf, then one started by hand (an older wolf-start), which would hold the ports
+	systemctl stop "$UNIT"
+	stop_background
+	systemctl start "$UNIT"
 	if wait_ready "$offset"; then
 		echo "wolf-start: Wolf runs ($UNIT, log $LOG), VMs: $*"
 		exit 0
