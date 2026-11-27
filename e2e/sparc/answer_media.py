@@ -352,14 +352,14 @@ exit 0
 
 PORTS_MIRROR = ("deb.debian.org", "/debian-ports")  # sparc64 is a port: sid ("unstable") only
 
-# systemd's timeouts in the installed system, a drop-in the late command writes (directory, file,
-# printf text): 90 s for a device to show up and for a unit to start are too short under TCG. On an
-# idle host udev's coldplug alone took about that long; on a busy one /boot's device, ttyS0 and journald
-# timed out and the boot stopped in emergency mode without `login:` (README.md, "Debian 13 on sun4u").
-# The boot scenarios pass the same as kernel options for disks installed before
-# (_debian13.SLOW_BOOT_OPTIONS)
+# systemd's timeouts in the installed system, a drop-in the late command writes (directory, file, its
+# lines): 90 s for a device to show up and for a unit to start are too short under TCG. On an idle host
+# udev's coldplug alone took about that long; on a busy one /boot's device, ttyS0 and journald timed out
+# and the boot stopped in emergency mode without `login:` (README.md, "Debian 13 on sun4u"). The boot
+# scenarios pass the same as kernel options for disks installed before (_debian13.SLOW_BOOT_OPTIONS).
+# Each line gets an `echo` of its own in the late command: no backslash (preseed_ports())
 PORTS_SYSTEMD_TIMEOUTS = ("/etc/systemd/system.conf.d", "wsh-lab-tcg.conf",
-                          r"[Manager]\nDefaultTimeoutStartSec=600s\nDefaultDeviceTimeoutSec=600s\n")
+                          ("[Manager]", "DefaultTimeoutStartSec=600s", "DefaultDeviceTimeoutSec=600s"))
 
 
 def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy=None, timezone="Etc/UTC"):
@@ -377,7 +377,15 @@ def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None,
     sshd doesn't let an empty password in (PermitEmptyPasswords no). The late command also takes a
     `deb cdrom:` line out of sources.list (the netinst writes none when it has a mirror) and, without a
     router or name server, what netcfg wrote for them, and writes systemd's longer timeouts
-    (PORTS_SYSTEMD_TIMEOUTS). No user is made (passwd/make-user false)."""
+    (PORTS_SYSTEMD_TIMEOUTS). No user is made (passwd/make-user false).
+
+    No answer may hold a backslash. The early command's debconf-set-selections runs under a cdebconf
+    of its own, which saves the answers to questions.dat escaping only newlines (as backslash-n); the
+    installer's main cdebconf loads that file and turns every backslash-n into a newline. A late
+    command with printf's backslash-n in it reached preseed_command cut at its first newline (a
+    debconf reply is one line): `sh -c` failed on the open quote, the rest stayed in the reply stream,
+    finish-install failed and debian-installer went back to its main menu instead of rebooting
+    (README.md, "Debian 13 on sun4u")."""
     dns = list(dns or [])
     for what, val in (("ip", ip), ("netmask", netmask), ("gateway", gateway), ("timezone", timezone),
                       *(("dns", d) for d in dns), ("domain", domain), ("hostname", hostname)):
@@ -394,8 +402,12 @@ def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None,
         late += "; in-target sed -i '/^[[:space:]]*gateway /d' /etc/network/interfaces"
     if not dns:
         late += "; in-target sed -i '/^nameserver /d' /etc/resolv.conf"
-    confdir, conf, text = PORTS_SYSTEMD_TIMEOUTS
-    late += f"; mkdir -p /target{confdir}; printf '{text}' > /target{confdir}/{conf}"
+    confdir, conf, conf_lines = PORTS_SYSTEMD_TIMEOUTS
+    late += f"; mkdir -p /target{confdir}"
+    for i, line in enumerate(conf_lines):
+        late += f"; echo '{line}' {'>>' if i else '>'} /target{confdir}/{conf}"
+    if "\\" in late:
+        raise ValueError(f"preseed late command with a backslash, which cdebconf can turn into a newline: {late!r}")
     return f"""\
 # lab.py install (wsh-pve e2e/sparc answer_media.preseed_ports): Debian 13 (debian-ports), sparc64
 d-i debian-installer/locale string en_US.UTF-8
