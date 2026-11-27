@@ -24,6 +24,7 @@ then lets the guest boot and checks, each a PASS/FAIL line also listed in OUTDIR
             without a dropout (a quiet 10 ms window inside it), after the silence the element
             outputs while the guest plays nothing
   eos       when QEMU quits, the video pipeline ends by itself (EOS) and exits 0
+  bridge-closed  and the bridge prints "closed" and exits 3
 
 Also measured (no pass/fail): the time from `fbtest` to the matching frame, and from a line written
 to the bridge to the guest's report of the key.
@@ -524,6 +525,16 @@ def main():
         if "eos" not in skip:
             result("eos", rc == 0, f"the video pipeline exited {rc} after QEMU quit"
                    + (" (EOS)" if re.search(r"Got EOS from element", open(video_log, errors="replace").read()) else ""))
+        if "eos" not in skip and ready:
+            # the bridge too: QEMU left the bus, so it says so and exits 3
+            try:
+                brc = bridge.proc.wait(10)
+            except subprocess.TimeoutExpired:
+                brc = None
+            closed = bridge.expect(r"^closed$", 1)
+            result("bridge-closed", brc == 3 and bool(closed),
+                   f"qemu-dbus-input exited {brc} after QEMU quit"
+                   + (" and printed 'closed'" if closed else " without printing 'closed'"))
         counts = dict((k, int(v)) for k, v in re.findall(r"([a-z-]+)=(\d+)(?=[ /]|$)", stats))
         if args.expect == "dmabuf":
             reply = re.search(r"dmabuf-reply-us=(\d+)/(\d+)", stats)
