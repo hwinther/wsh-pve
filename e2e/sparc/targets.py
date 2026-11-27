@@ -127,6 +127,10 @@ PACKAGES_2026_11_22_SS600MP = {"pve-qemu-kvm": "11.1.3-3+wsh14", "qemu-server": 
                                "pve-manager": "9.2.32+wsh10 + SS-600MP profile", "libpve-storage-perl": "9.1.18+wsh2"}
 # SunOS 4.1.2 under Sun's 600MP PROM through PVE: the published packages with qemu-system-sparc built from
 # the series to wsh/0189 and qemu-server's SS-600MP profile with ss600mp.bin, both mounted over theirs
+PACKAGES_2026_11_26_SS600MP_SOLARIS = {
+    "pve-qemu-kvm": "11.1.3-4+wsh30, qemu-system-sparc from the series to wsh/0191 (lab build)",
+    "qemu-server": "9.2.24+wsh3 + ss600mp.bin in the SS-600MP profile",
+    "pve-manager": "9.2.41+wsh2", "libpve-storage-perl": "9.1.18+wsh2"}
 PACKAGES_2026_11_26_SS600MP_PROM = {
     "pve-qemu-kvm": "11.1.3-4+wsh30, qemu-system-sparc from the series to wsh/0189 (lab build)",
     "qemu-server": "9.2.24+wsh3 + ss600mp.bin in the SS-600MP profile",
@@ -1570,6 +1574,37 @@ TARGETS["sol21-ss10"] = {
     "minutes": 11,
     "tested": {"date": "2026-11-21", "packages": PACKAGES_2026_11_21_3_WSH6, "with": "--check"},
 }
+
+# Solaris 2.1-2.5.1 on the SPARCserver 600MP under Sun's own 600MP PROM (ss600mp.bin, as
+# sunos412-ss600mp-prom): the install of the SS-5/SS-10 target of the same release, unchanged (the CD as
+# a disk, Quick Install or 2.4-2.5.1's screens), at 256 MB, one CPU. It needs pve-qemu wsh/0120-0188
+# (the PROM) and wsh/0190: the PROM's root node has bcopy?, so the kernel zeroes and copies pages with
+# the MXCC's stream registers and polls them for RDY, which QEMU never answered (the boot hung after
+# "clock gained ... days"). Under OpenBIOS 2.1-2.5.1 weren't tried on the SS-600MP; Solaris 2.6 and later
+# halt at their banner on it ("This hardware platform is not supported by this release of Solaris": the
+# kernel refuses the root node name SUNW,SPARCsystem-600, under any firmware), so these are the releases
+# it runs (submodules/SPARC.md, "Sun's own SS-600MP boot PROM", item 13).
+def _ss600mp_prom(base, name, title, minutes):
+    t = TARGETS[base]
+    return {**t, "title": title,
+            "profile": {**t["profile"], "machine": "SS-600MP", "bios": "ss600mp.bin", "memory": 256},
+            "hostname": name, "minutes": minutes,
+            "tested": {"date": "2026-11-26", "packages": PACKAGES_2026_11_26_SS600MP_SOLARIS, "with": "--check"}}
+
+
+# Through PVE, two passes each (install, first boot, check): 2.1 9.8/10.4 min, 2.2 8.7/8.8, 2.3 9.1/9.0,
+# 2.4 8.8/9.3, 2.5 8.9/9.3, 2.5.1 36.3/36.8 (most of it 2.5.1's Maintenance Update)
+_SS600MP_PROM_SOLARIS = [
+    ("sol21-ss10", "sol21-ss600mp-prom", "Solaris 2.1 End User", 11),
+    ("sol22-ss10", "sol22-ss600mp-prom", "Solaris 2.2 End User", 9),
+    ("sol23-ss5", "sol23-ss600mp-prom", "Solaris 2.3 Edition II End User", 9),
+    ("sol24-ss5", "sol24-ss600mp-prom", "Solaris 2.4 HW 3/95 End User", 9),
+    ("sol25-ss5", "sol25-ss600mp-prom", "Solaris 2.5 HW 1/96 End User", 9),
+    ("sol251-ss5", "sol251-ss600mp-prom", "Solaris 2.5.1 11/97 End User", 37),
+]
+for _base, _name, _what, _minutes in _SS600MP_PROM_SOLARIS:
+    TARGETS[_name] = _ss600mp_prom(
+        _base, _name, f"{_what} on a SPARCserver 600MP (the Sun 600MP PROM ss600mp.bin, one CPU)", _minutes)
 
 # NeXTSTEP 3.3 and OPENSTEP 4.2 (Mach) for SPARC: the CD's text stage (language, disk, copy the base
 # system) and, after a reboot into the disk, Configure and the graphical Installer, all on the TCX

@@ -163,6 +163,8 @@ maintains the patches.
 | `0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers-` | `sun4m-ss600mp-test` cases for 0184-0186: `mxcc-mbus` (regions for module IDs 8 and 9 with `-smp 2`, each port address register with its module ID, the PROM's read of the control register and its write of E$ enable, the doubleword at `0xa00`, module 9 left alone; none with `TI-SuperSparc-50` or on the SS-10), `esp-cdb-lun` (an INQUIRY by programmed I/O after Select without ATN: LUN 0 of a disk is a direct access device, LUNs 1-7 answer `0x7f`; the SS-10 still answers LUN 1 as LUN 0), `audio-regs` (the `sun-audio` region, reads of 0; none on the SS-10); 16 cases in the test; each fails without its patch | ours | not in QEMU |
 | `0188-hw-sparc-sun4m-give-the-SS-600MP-boot-PROM-a-configu` | Sun's SS-600MP boot PROM (with 0120-0186) found QEMU's NVRAM (OpenBIOS's partitions) invalid at every power-on ("Incorrect configuration checksum"), set its defaults with `diag-switch?` true and booted from the network for ever; only Stop-A on the keyboard gave `ok`, and through PVE (`-nographic`, no keyboard) nothing did. An NVRAM volume the PROM had written that way hung the next start in its self test (the VME loopback test, progress `0xb3`, loop on error). Its configuration area, worked out in the lab from the bytes `setenv` changes: the first 6 KB of the M48T08; byte 0 the checksum, the XOR of bytes `0x20`-`0x17ff` and `0xd2`; bytes 1-4 flags the self test reads, outside the checksum (`diag-switch?`, `mfg-switch?`, `skip-vme-loopback?`); a boolean `0xff` or 0, a number a byte, a string a length byte, its characters and a NUL. New hwdef field `prom_config`, set on the SS-600MP only: when the firmware's name doesn't start with `openbios` and the NVRAM isn't an image written before, QEMU writes that area with the PROM's defaults except `diag-switch?` false, `auto-boot?` false (it stops at `ok`) and `skip-vme-loopback?` true (no VMEbus in QEMU); the IDPROM as before; `-prom-env` has no effect there (a warning). OpenBIOS and the other machines' PROMs get OpenBIOS's partitions byte for byte as before. The PROM reaches `ok` on ttya within 10 s without a keyboard, and what `setenv` stores in an NVRAM volume lasts ("Sun's own SS-600MP boot PROM") | ours, on 0059's NVRAM drive (built on LEMU code) | not in QEMU (built on LEMU code, not proposed) |
 | `0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf` | `sun4m-ss600mp-test` case `prom-nvram` for 0188: with a firmware that isn't OpenBIOS (a file of zeros; nothing runs under qtest) the SS-600MP's NVRAM has the PROM's configuration area (the checksum right, `diag-switch?` and `auto-boot?` false, `skip-vme-loopback?` true, the defaults) and the IDPROM; OpenBIOS on the SS-600MP and the SS-20 with that firmware keep OpenBIOS's first partition; an NVRAM image that isn't blank is left alone but the IDPROM; 17 cases in the test; fails without 0188 | ours | not in QEMU |
+| `0190-target-sparc-let-the-SS-600MP-s-MXCC-stream-register` | Solaris 2.1-2.5.1 booted from the SS-600MP PROM (`boot cdrom`, with 0120-0188) hung right after the kernel's `WARNING: clock gained ... days`, the CPU in a two-instruction loop at PIL 0, nothing more on the console. The PROM's root node has `bcopy?` (a block copy engine; OpenBIOS's has none), so the kernel zeroes and copies pages with the MXCC's stream registers (ASI 2, SunOS's sun4m `mmu.h` names): it fills the stream data registers, writes a physical address to the stream destination (`0x01c0_0200`) or source register (`0x01c0_0100`), then loads that register until RDY (bit 63) is set. QEMU moves the block on the store but never answered a load of the two registers (0), so the kernel spun for ever. New CPU feature `mxcc-stream-rdy` (on no CPU model; hwdef field `mxcc_stream_rdy`, set on the SS-600MP only): a doubleword load of either register returns the address last written with RDY set. Other machines and the other MXCC registers are unchanged; no new state. The 2.1-2.5.1 CDs then boot to the installer's first question and install ("Sun's own SS-600MP boot PROM", item 13) | ours | not reported |
+| `0191-tests-qtest-test-the-MXCC-stream-registers-RDY-bit` | `sun4m-viking-diag-test` cases `stream/ss600mp`, `stream/ss10` and `stream/ss20` for 0190: a PROM built by the test fills the stream data registers, writes the destination register, reads it back, then the source register; the block reaches memory and comes back on every machine, both registers read the address with RDY on the SS-600MP and 0 on the SS-10 and SS-20; 10 cases in the test; the SS-600MP case fails without 0190 | ours | not in QEMU |
 
 The ESCC, cg3, SunOS idle, `%fsr` (0026) and CS4231 sound (0028-0029) patches are by Antoni Sawicki, from [LEMU](https://github.com/tenox7/lemu), a QEMU
 fork for vintage machines (GPLv2, like QEMU). LEMU states that its code won't be sent to QEMU, so we
@@ -1067,8 +1069,8 @@ from [andarazoroflove/sparc](https://github.com/andarazoroflove/sparc) (not in t
 | SS-20 | `ross225r.bin` | default | 256 | `Cpu #0 Data Access Error`, `ok` |
 | SS-20 | `ross225r.bin` | SuperSparc-50 | 256 | installer (POST: `TI, TMS390Z50`) |
 | SS-20 | `cpu10.bin` | SuperSparc-50 | 256 | `Incorrect configuration checksum`, `Data Access Error`, `ok` |
-| SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs) |
-| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; with `wsh/0159`-`0160` (lab build) past it to the DMA control register test (`0xc3`); with `wsh/0171` (lab build) past the DMA's register and size checks to a lance test that sends a frame (`0xc4`); with `wsh/0173` and `0175` (lab build) past the lance loopback and I/O cache tests to the ESP's configuration register 2 test (`0xe4`); with `wsh/0177` and `0179` (lab build) past the ESP's register and size checks to its DMA read test (`0xe5`); with `wsh/0181` and `0182` (lab build) past that test, the rest of the POST passes or is skipped, and it prints its MMU setup on ttya and reaches `ok` after `Cpu #0 Data Access Exception`; `banner` prints `Data Access Exception` too; with `wsh/0184`-`0186` (lab build) it probes `Cpu #0 TI,TMS390Z55`, prints its banner, tests memory and, with a blank NVRAM (`diag-switch?` true), boots from the network and waits for a RARP reply; after Stop-A on the keyboard `banner` is clean, `probe-scsi` lists the CD-ROMs at targets 2 and 6 and the disk at 3, and `boot disk` boots the stored `sunos412-ss600mp` disk to its login; with `wsh/0188` (lab build) QEMU gives it a configuration it accepts, and it reaches `ok` on ttya without Stop-A (no keyboard needed, so through PVE too) and installs SunOS 4.1.2 from its CD (`sunos412-ss600mp-prom`, through PVE) ("Sun's own SS-600MP boot PROM") |
+| SS-600MP | OpenBIOS | default | 256 | kernel: `This hardware platform is not supported by this release of Solaris.` (1 and 2 CPUs): 2.6 and later refuse the machine by its root node name `SUNW,SPARCsystem-600`, which OpenBIOS gives correctly; the same under Sun's PROM. The 2.5 CD boots to the installer here ("Sun's own SS-600MP boot PROM", item 13) |
+| SS-600MP | Sun 600MP PROM (lab archive) | default, SuperSparc-40/50/51/60 | 256 | `qemu: fatal: Trap 0x01 (Instruction Access Fault)` within seconds, nothing printed; with pve-qemu `wsh/0120` (11.1.3-4 lab build) a silent loop in its power-on self test; with `wsh/0145`-`0149` (lab build) through the CPU module tests to the board's counter-timer test (progress `0xa2`), on some runs on to the IOMMU's SBus slot configuration test (`0xad`); with `wsh/0151`-`0157` (lab build) on every run past the counter-timer, IOMMU, VMEbus control and lance address port tests to the lance's register size check (`0xc1`), which wants SBus time-out traps; with `wsh/0159`-`0160` (lab build) past it to the DMA control register test (`0xc3`); with `wsh/0171` (lab build) past the DMA's register and size checks to a lance test that sends a frame (`0xc4`); with `wsh/0173` and `0175` (lab build) past the lance loopback and I/O cache tests to the ESP's configuration register 2 test (`0xe4`); with `wsh/0177` and `0179` (lab build) past the ESP's register and size checks to its DMA read test (`0xe5`); with `wsh/0181` and `0182` (lab build) past that test, the rest of the POST passes or is skipped, and it prints its MMU setup on ttya and reaches `ok` after `Cpu #0 Data Access Exception`; `banner` prints `Data Access Exception` too; with `wsh/0184`-`0186` (lab build) it probes `Cpu #0 TI,TMS390Z55`, prints its banner, tests memory and, with a blank NVRAM (`diag-switch?` true), boots from the network and waits for a RARP reply; after Stop-A on the keyboard `banner` is clean, `probe-scsi` lists the CD-ROMs at targets 2 and 6 and the disk at 3, and `boot disk` boots the stored `sunos412-ss600mp` disk to its login; with `wsh/0188` (lab build) QEMU gives it a configuration it accepts, and it reaches `ok` on ttya without Stop-A (no keyboard needed, so through PVE too) and installs SunOS 4.1.2 from its CD (`sunos412-ss600mp-prom`, through PVE); 2.6's CD stops after the kernel's banner with `This hardware platform is not supported by this release of Solaris.` (the kernel refuses the machine by name), and with `wsh/0190` (lab build) Solaris 2.1, 2.2, 2.3, 2.4, 2.5 and 2.5.1 install and boot under it (`sol21-ss600mp-prom` to `sol251-ss600mp-prom`, through PVE) ("Sun's own SS-600MP boot PROM") |
 | SS-4 | `ss4.bin` | default | 256 | `Probing ... at 2,0 SUNW,tcx Data Access Error`, `ok` (with and without a TCX) |
 | LX | `lx.bin` | default | 64 | POST `ERROR : Unexpected Synchronous Trap Taken, Trap Type = 00000008`, then `qemu: fatal: Trap 0x03 (Privileged Instruction)`. With pve-qemu `wsh/0053` (lab build, in review) the POST passes its FPU tests and the PROM probes the SBus and stops at `ok` after `cgsix Data Access Error`; with `wsh/0056`-`0057` too it probes all slots and boots Solaris 2.6, NetBSD 9.3 and SunOS 4.1.4 over ttya with `-nographic` ("SPARCstation LX" below) |
 | LX | `lx564.bin` | default | 64 | `initializing VME mmuData Access Error`, `ok`: a Themis LXE+ PROM that wants a VME bridge; with two empty slots in a lab QEMU it installs and boots Solaris 2.6 and SunOS 4.1.3_U1B ("SPARCstation LX with the Themis LXE+ PROM") |
@@ -1299,7 +1301,7 @@ switches (fork, exec, pipe), on both machines.
 - The Sun SS-10/SS-20 PROMs only with the SS-20 machine and `-cpu TI-SuperSparc-50` (or -40/-60);
   qemu-server passes -50 for `ss20_v2.25_rom` on SS-20. They bring no speed benefit over OpenBIOS. The
   SS-10 PROM doesn't run on the SS-10 machine.
-- Not SS-600MP (Solaris 2.6 refuses it), and none of the other PROMs tried except `ss5-170.bin` and
+- Not SS-600MP (Solaris 2.6 and later refuse it by name; 2.1-2.5.1 run there under Sun's PROM), and none of the other PROMs tried except `ss5-170.bin` and
   `ross225r.bin` (which runs as a SuperSPARC SS-20).
 
 ### SMP
@@ -2728,6 +2730,73 @@ What it would take for the rest:
      true`, and booted 4.1.2 by itself at the next start (its banner after 11 s).
      The OpenBIOS target `sunos412-ss600mp` through PVE with the same build: `lab.py install
      --check` passed (5.7 min: 132 s, 147 s, 47 s).
+  13. **Solaris 2.x under the PROM, pve-qemu `wsh/0190`-`0191` (2026-11-26/27, lab build of 11.1.3 with
+     the whole series):** the kernel's checks were read in the lab's copy of the 2.6 source and in
+     disassemblies of the CDs' kernels (nothing of either in the repository).
+     - *Which releases:* the SPARCserver 600MP (`SUNW,SPARCsystem-600`, sun4m) is the first sun4m
+       machine, and Solaris 2.1, the first sun4m release, already runs on it. From 2.6 on the sun4m
+       kernel refuses it: right after its banner a routine reads the root node's `name` and, for
+       `SUNW,SPARCsystem-600`, prints `This hardware platform is not supported by this release of
+       Solaris.` and halts. The lab's 2.6 5/98 (`solaris_2.6_598_sparc.iso`), 7 3/99, 8 1/01 and 9 CDs
+       all carry that routine and message; the lab's 2.6 source tree halts there only for the Cypress
+       CY605 module ("CY605B no longer supported"), so the name check came with a later 2.6 update
+       (no 2.6 FCS CD in the lab to try). 2.1, 2.2, 2.3, 2.4, 2.5 and 2.5.1 have no such check. Under
+       the PROM the 2.6 CD boots to the same message (`Program terminated`, `ok`), so 2.6-9 weren't
+       tried further. That matches Sun's end-of-life notice for the 600 series as relayed on the
+       sun-managers list (no support in Solaris releases shipped after March 1997; the notice itself
+       wasn't found) and Sun's guide to the 600MP dual SuperSPARC module (SuperSPARC modules in a
+       multiprocessor 600MP need Solaris 2.3 or later, not SunOS 4.x). The Solaris 2.6 information
+       library lists "most" sun4m platforms, not which.
+     - *Why OpenBIOS is refused:* the same check. OpenBIOS names the SS-600MP's root node
+       `SUNW,SPARCsystem-600` (correctly, as the PROM does), so 2.6 halts there; nothing to fix in
+       OpenBIOS short of misnaming the machine, not done. Under OpenBIOS (the package's, 11.1.3-4+wsh30)
+       the 2.5 CD boots to the installer's first question on the SS-600MP (`boot
+       /iommu/sbus/dma/esp/sd@6,0:d`), so the older releases aren't refused there; no OpenBIOS install
+       was tried.
+     - *The blocker (`wsh/0190`):* every one of the six CDs, booted with `boot cdrom` (the CD as a disk,
+       as their SS-5/SS-10 targets), hung right after `WARNING: clock gained ... days`, the CPU in a
+       two-instruction loop: a doubleword load of the MXCC stream destination register (ASI 2,
+       `0x01c0_0200`) until bit 63 is set. The PROM's root node has `bcopy?` (a block copy engine;
+       OpenBIOS's has none), so the kernel zeroes and copies pages with the MXCC's stream registers
+       (the 2.6 source's `hwblkclr` and `bcopy` paths: fill the stream data, write the destination or
+       source address, poll RDY). QEMU does the transfer on the store but read those two registers as
+       0. With `mxcc-stream-rdy` (SS-600MP only) they read back the address with RDY set, and all six
+       CDs boot to the installer's first question (2.1-2.3 `What type of terminal are you using?`,
+       2.4-2.5.1 the same with 13 choices).
+     - *Installs (lab, local QEMU, `lab.py run` of the targets' scenarios, 256 MB, one CPU):* 2.1
+       (suninstall's Standalone Quick Install, 428 s), 2.2 (447 s), 2.3 (473 s), 2.4 (245 s), 2.5 (259 s)
+       and 2.5.1 (2626 s, most of it the Maintenance Update) install, boot to `console login:` and log in (`SunOS sol25 5.5 Generic sun4m sparc
+       SUNW,SPARCsystem-600`, `le0` up with the installer's address). 2.1's, 2.2's and 2.3's `init 5`
+       reboots, and the PROM then prints `Rebooting with command: -a` and stops at the boot program's `Enter
+       filename [/kernel/unix]:` (under OpenBIOS the reboot boots the disk normally): the scenarios'
+       `power_off()` stops QEMU there too.
+     - *Through PVE* (the lab's PVE container image with the published packages, this
+       qemu-system-sparc and qemu-server's `Machine.pm` and `QemuServer.pm` from main, the PROM
+       image in `/usr/share/kvm`), `lab.py install <target> --check`, one at a time, two passes
+       each: `sol21-ss600mp-prom` 9.8 and 10.4 min (install 304/298 s, first boot 184/214 s, check
+       87/98 s), `sol22-` 8.7 and 8.8 (274/276, 149/150, 86/86), `sol23-` 9.1 and 9.0 (292/292,
+       151/150, 88/86), `sol24-` 8.8 and 9.3 (296/330, 138/137, 74/73), `sol25-` 8.9 and 9.3
+       (273/294, 165/166, 80/79), `sol251-` 36.3 and 36.8 (1906/1935, 170/170, 87/86); each check
+       logged in as root with `wshlab`, found the marker and `le0` at 10.0.2.15/24. So
+       `sol21-ss600mp-prom` to `sol251-ss600mp-prom` are automated targets (e2e/sparc/README.md,
+       "Older Sun releases").
+     - *More than one CPU:* with `-smp 2` the PROM's banner still says `SPARCsystem 600(1 X 390Z55)` and
+       Solaris 2.5 boots and runs on one CPU (no `cpu1`): QEMU starts every CPU but the first powered
+       off, while the PROM expects all modules to run it from reset and report in. A lab-only build
+       that starts both at reset stopped after `screen not found.`, CPU 1 in a branch to itself in the
+       PROM (its stop loop, presumably): the PROM's multiprocessor start (mailboxes, module IDs) would
+       need modelling first. Not pursued; the profile keeps one CPU.
+     - *Tests:* `wsh/0191`, `sun4m-viking-diag-test` cases `stream/ss600mp`, `stream/ss10` and
+       `stream/ss20`; the SS-600MP case fails on a build without 0190 (`0x0 == 0x8000000000003000`).
+     Regression (the series to 0191 applied with `patch -p1 -s -t -F0`, 218 patches without fuzz, the
+     tree identical to the one tested, lab): `make check-qtest-sparc` 38 passed, 2 skipped, 1 failed
+     (`qmp-test`'s `/sparc/qmp/oob`, as before), `sun4m-viking-diag-test` 10/10. With the package's
+     OpenBIOS (11.1.3-4+wsh30), `-vga none` and user networking, copies of the stored disks boot to a
+     root shell, read 300 64 KB blocks from the raw disk, copy and compare their kernel and ping the
+     host side: `sunos412-ss600mp` (`is alive`), `sol26-ss20` (`is alive`) and `netbsd93-sparc` on SS-5
+     (2 of 2 replies). The SS-20 PROM (`ss20_v2.25_rom`, `TI-SuperSparc-50`) and the SS-5 PROM reach
+     `ok` and print byte for byte what the published 11.1.3-4+wsh30 prints. Through PVE (same build):
+     `lab.py install sunos412-ss600mp-prom --check` passed (6.1 min: 140 s, 156 s, 56 s).
 
   **Cause:** not the CPU module type and not the MBus module IDs: the PROM checks the
   SuperSPARC's diagnostic internals (boot mode, store buffer, cache RAMs, MXCC) and the board's
@@ -2761,7 +2830,8 @@ What it would take for the rest:
     CPU 1, wasn't run). Older SunOS: 4.1.2 is the first release with sun4m (machine ID 66
     above), and the lab has 4.0.3C (sun4c) and nothing from 4.1.1, so nothing to gain. Solaris
     2.6's "This hardware platform is not supported" under OpenBIOS already runs on the
-    SuperSPARC, so a CPU model isn't the obvious cause; not investigated.
+    SuperSPARC, so a CPU model isn't the obvious cause: the kernel refuses the machine by its
+    name, under any firmware (item 13).
   Regression for `wsh/0120`-`0121` (a local build of 11.1.3 with the whole series, lab):
   `make check-qtest-sparc` 32 passed, 2 skipped, 1 failed (`qmp-test`'s `/sparc/qmp/oob`, as
   before), `sun4m-boot-mode-ifetch-test` 6/6 (its SS-10 boot mode case fails without 0120);
@@ -2776,7 +2846,8 @@ What it would take for the rest:
   `'SS-10'` in `$SPARC32_PROFILES`, the same in pve-manager's `sparc32Profiles`, and the hint that
   it doesn't run removed. The SS-600MP has a profile since `sunos412-ss600mp` (OpenBIOS, and since
   `wsh/0188` Sun's 600MP PROM `ss600mp.bin`; one CPU, 1024 MB; "Supported profiles"); Solaris 2.6
-  still refuses the platform under OpenBIOS.
+  and later refuse the machine under any firmware, 2.1-2.5.1 install under `ss600mp.bin` with
+  `wsh/0190` (no profile change needed).
 
 ### SPARCstation LX with its own PROM (lab only)
 

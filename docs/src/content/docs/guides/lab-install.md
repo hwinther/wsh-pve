@@ -31,6 +31,12 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sol24-ss20` | Solaris 2.4 HW 3/95, End User | as `sol23-ss20` | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~8 min |
 | `sol251-ss5` | Solaris 2.5.1 11/97, End User | SS-5, `ss5.bin` (Sun PROM), 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~45 min |
 | `sol251-ss20` | Solaris 2.5.1 11/97, End User | SS-20, OpenBIOS, 512 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~47 min |
+| `sol21-ss600mp-prom` | Solaris 2.1, End User Cluster, as `sol21-ss10` | SS-600MP, `ss600mp.bin` (Sun PROM), 256 MB, one CPU, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`); see "The SPARCserver 600MP" below | `solaris2_1_sparc.iso` | `root` / `wshlab` | ~11 min |
+| `sol22-ss600mp-prom` | Solaris 2.2, End User, as `sol22-ss10` | as `sol21-ss600mp-prom` | `Solaris_2.2.img` | `root` / `wshlab` | ~9 min |
+| `sol23-ss600mp-prom` | Solaris 2.3 Edition II, End User, as `sol23-ss5` | as `sol21-ss600mp-prom` | `Solaris2.3Edition-II.iso` | `root` / `wshlab` | ~9 min |
+| `sol24-ss600mp-prom` | Solaris 2.4 HW 3/95, End User, as `sol24-ss5` | as `sol21-ss600mp-prom` | `solaris_2.4_sparc.iso` | `root` / `wshlab` | ~9 min |
+| `sol25-ss600mp-prom` | Solaris 2.5 HW 1/96, End User, as `sol25-ss5` | as `sol21-ss600mp-prom` | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
+| `sol251-ss600mp-prom` | Solaris 2.5.1 11/97, End User, as `sol251-ss5` | as `sol21-ss600mp-prom` | `solaris_2.5.1_1197.iso` | `root` / `wshlab` | ~37 min |
 | `sol25-ss5` | Solaris 2.5 HW 1/96, End User | SS-5, OpenBIOS, 256 MB, serial console, Sun-labelled 3G disk on `scsi3`, lance; the CD answers as a disk (`cd_as_disk=1`) | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol25-ss20` | Solaris 2.5 HW 1/96, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as `sol25-ss5` | `solaris2.5_sparc.iso` | `root` / `wshlab` | ~9 min |
 | `sol26-ss20` | Solaris 2.6 5/98, End User | SS-20, OpenBIOS, 512 MB, one CPU, otherwise as above | `solaris_2.6_598_sparc.iso` | `root` / `wshlab` | ~12 min |
@@ -95,6 +101,16 @@ string by itself, and the first boot and the check type `boot disk`. It needs a 
 pve-qemu patches up to `wsh/0188`, a qemu-server with `ss600mp.bin` in the SS-600MP profile and the
 PROM image in `/usr/share/kvm/` on the node, which no package has (see [The SPARCserver
 600MP](/guides/sparc/#the-sparcserver-600mp)); about 6.5 minutes through PVE.
+**Solaris on the SPARCserver 600MP** (`sol21-ss600mp-prom` to `sol251-ss600mp-prom`): Solaris 2.1,
+2.2, 2.3, 2.4, 2.5 and 2.5.1 install under the same PROM, each with the install of its SS-5 or SS-10
+target unchanged (the CD as a disk, the same screens and answers, End User), 256 MB and one CPU. At
+`ok` the install types `boot cdrom` and the first boot and the check `boot disk`, as for 4.1.2. They
+need a `pve-qemu-kvm` with pve-qemu patches up to `wsh/0190` (without it every release hangs right
+after the kernel's `clock gained ... days` warning), besides the qemu-server profile and the PROM
+image above. Solaris 2.6 and later don't run on this machine under any firmware: their kernel halts
+after its banner with `This hardware platform is not supported by this release of Solaris.` 2.1, 2.2
+and 2.3 reboot instead of powering off at the end of the first boot and the check; the PROM then
+stops in the boot program's `Enter filename` question, where the tool stops the VM.
 
 An SS-5 install doesn't boot on SS-10/SS-20 (the device paths differ), so each machine has its own
 target. Solaris 8 and 9 install on both: the SS-5 targets use the later updates (8 2/02, 9 9/05),
