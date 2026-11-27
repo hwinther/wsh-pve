@@ -1,5 +1,6 @@
-"""The x86 retro install targets (DOS from floppies): merged into targets.MEDIA and targets.TARGETS by
-targets.py, kept here so the DOS profile and its media live in one place. Data only, like targets.py.
+"""The x86 retro install targets (DOS from floppies, and ReactOS from its CD): merged into targets.MEDIA
+and targets.TARGETS by targets.py, kept here so the x86 profiles and their media live in one place. Data
+only, like targets.py.
 
 The VM profile (X86_DOS) and why each option is what it is: e2e/sparc/README.md, "DOS install
 targets", and docs/src/content/docs/guides/dos.md. In short: i440fx (`machine: pc`; `isapc` isn't
@@ -20,6 +21,9 @@ PACKAGES_2026_11_17 = {"pve-qemu-kvm": "11.1.3-2+wsh11", "qemu-server": "9.2.15+
 # the DOS profile doesn't use)
 PACKAGES_2026_11_20 = {"pve-qemu-kvm": "11.1.3-2+wsh26", "qemu-server": "9.2.19+wsh2",
                        "pve-manager": "9.2.31+wsh4"}
+# the published packages of 2026-11-27 (ReactOS)
+PACKAGES_2026_11_27 = {"pve-qemu-kvm": "11.1.3-4+wsh37", "qemu-server": "9.2.24+wsh5",
+                       "pve-manager": "9.3.1+wsh1"}
 
 X86_DOS = {"ostype": "other", "machine": "pc", "cpu": "pentium", "kvm": 0, "memory": 32, "balloon": 0,
            "tablet": 0, "vga": "std", "net0": "ne2k_pci", "boot": "order=floppy0;ide0"}
@@ -116,4 +120,63 @@ TARGETS = {
         "minutes": 11,  # 10.3-11.3 min: install ~366 s, first boot ~180-300 s, --check ~35 s
         "tested": {"date": "2026-11-17", "packages": PACKAGES_2026_11_17, "with": "--check"},
     },
+}
+
+
+# ReactOS 0.4.16 (GPL): the release CD as published (github.com/reactos/reactos/releases, tag
+# 0.4.16-release, ReactOS-0.4.16-iso.zip), and the same CD with the lab's answer file in i386/unattend.inf
+# instead of the release's sample (answer_media.reactos_unattend, edited in place by
+# answer_media.iso_replace: same size, nothing else changed). `lab.py media reactos0416 --convert
+# ReactOS-0.4.16-i386.iso` writes it and checks both checksums. The README ("ReactOS") and the DOS
+# guide's ReactOS section have the why of each option.
+MEDIA.update({
+    "ReactOS-0.4.16-i386.iso": {
+        "title": "ReactOS 0.4.16 boot CD (i386, release ISO)", "content": "iso", "size": 406847488,
+        "sha256": "6f15ca6e1edf5527b8489958d16c54f0da0e7948c305d7c89e74687c6cbf6855",
+        "lab": "other-os/reactos/ReactOS-0.4.16-i386.iso"},
+    "reactos0416-wshlab.iso": {
+        "title": "ReactOS 0.4.16 boot CD with the lab's unattend.inf (from ReactOS-0.4.16-i386.iso)",
+        "content": "iso", "size": 406847488,
+        "sha256": "215ac517acc28a0b2c99292a88311fa0efdb3ab682471bd431cc1e77cd3de559",
+        "lab": "other-os/reactos/reactos0416-wshlab.iso",
+        "from": {"name": "ReactOS-0.4.16-i386.iso", "convert": "reactos-unattend"}},
+})
+
+# A PC that ReactOS 0.4.16 has drivers for: i440fx with ACPI, IDE (ATA), std VGA (VBE, 1024x768x32 from
+# the answer file), an RTL8139 (DHCP by default), PS/2 mouse and keyboard (no USB tablet), no balloon
+# (no virtio driver: a device without a driver opens the New Hardware Wizard), TCG like the DOS targets
+# (KVM not tried), COM1 for the install's debug log and the logon report. ostype wxp: ReactOS reports
+# NT 5.2, and qemu-server keeps the RTC in local time as for Windows. tdf 0: for a Windows ostype
+# qemu-server also adds `-rtc driftfix=slew` (ACPI on), and with it ReactOS's setup hung under TCG in
+# its HAL before the first screen (the last line on COM1: "STUB Adjustment(Bus 0:ffffffff.0)").
+X86_REACTOS = {"ostype": "wxp", "tdf": 0, "machine": "pc", "cpu": "qemu64", "kvm": 0, "memory": 1024,
+               "balloon": 0, "tablet": 0, "vga": "std", "net0": "rtl8139", "serial0": "socket",
+               "boot": "order=ide0;ide2"}
+
+TARGETS["reactos0416"] = {
+    "title": "ReactOS 0.4.16 from its CD, unattended (i440fx, SeaBIOS, std VGA 1024x768, RTL8139)",
+    "status": "automated",
+    "method": "scripted",
+    "profile": dict(X86_REACTOS),
+    "disk": {"bus": "ide0", "size": 4, "label": None},
+    "media": [{"name": "reactos0416-wshlab.iso", "drive": "ide2"}],
+    # the text-mode setup and the graphical second stage run from the answer file; the scenario picks
+    # the setup in the CD's boot menu, answers the kernel debugger, and at the desktop types the boot
+    # loader's default (no debugger) and the logon report C:\wshlab.cmd (README.md, "ReactOS")
+    "install": {"scenario": "reactos-install.py", "vars": {}, "timeout": 3600},
+    "firstboot": {"scenario": "reactos-firstboot.py", "vars": {}, "timeout": 900},
+    "check": {"scenario": "reactos-boot-disk.py", "vars": {"VERSION": r"(?m)^Version 0\.4\.16-x86 ",
+                                                          "IDLE_BELOW": "25"}, "timeout": 900},
+    "boot": "ide0",
+    "login": {"user": "Administrator", "console": "VGA (noVNC console of VM <vmid>; logs on by itself);"
+                                                  " serial0 has the logon report"},
+    "marker": "C:\\WSHLAB.TXT",
+    "hostname": "reactos",  # ComputerName REACTOS in the answer file (ReactOS shows it in capitals)
+    # the answer file on the CD sets them, so other values would need another medium
+    "fixed": {"root_password": "the answer file on the CD sets it", "hostname": "the answer file on the CD sets it",
+              "user": "not implemented for ReactOS"},
+    "network": "none set by the lab: ReactOS takes an address by DHCP on its RTL8139",
+    "net_modes": ["none"],
+    "minutes": 17,  # 16.4 min: install 580 s, first boot 279 s (the marker typed at ~5 keys/s), --check 93 s
+    "tested": {"date": "2026-11-27", "packages": PACKAGES_2026_11_27, "with": "--check"},
 }

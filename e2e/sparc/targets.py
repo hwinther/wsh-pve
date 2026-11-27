@@ -15,6 +15,8 @@ medium in MEDIA (`convert`: "bin2352" = the 2048 data bytes of each 2352-byte ra
 `lab.py media <target> --convert <source>`, which checks the source's and the result's sha256; with
 `from` "files" ({name: (size, sha256)}) it is made from those files in a directory (`--convert <dir>`;
 `convert`: "openbsd-sets" = OpenBSD's sets on a CD, answer_media.openbsd_sets), each checked first.
+A `convert` in ISO_EDITS makes it from another CD by replacing a few small files in place
+("reactos-unattend": the ReactOS CD with the lab's answer file, answer_media.reactos_unattend).
 
 TARGETS: per target
   title      what it is
@@ -57,6 +59,8 @@ TARGETS: per target
              ["none"]: the guest configures no network (DOS); only --bridge/--vlan apply
   dhcp_check {commands, expect}: with --ip dhcp, what the --check boot runs as well and the regexes
              its output must all have (the lease and the network beyond it)
+  fixed      {option: why}: install options (root_password, hostname, user) the target can't take
+             other than its own value (ReactOS: the answer file on its CD sets them)
   net_refuse {option: why}: network options (dns, domain, gateway, netmask) the guest can't use
   net_require  options a static address needs (["gateway", "dns"]: the installer fetches packages)
   apt_proxy  True: the installer fetches packages and takes --apt-proxy / WSH_LAB_APT_PROXY
@@ -79,6 +83,9 @@ DEFAULT_ROOT_PASSWORD = "wshlab"  # public on purpose: these are throwaway lab V
 CONVERSIONS = {"bin2352": (2352, 16, 2048)}  # raw CD sectors (Mode 1): sync + header, 2048 data, EDC/ECC
 # MEDIA "from" with "files" (install.convert_files): name -> the function of answer_media that makes the CD
 FILE_CONVERSIONS = {"openbsd-sets": "openbsd_sets"}
+# MEDIA "from" made by editing a few files of a CD in place (install.convert_iso_edit): name -> the
+# function of answer_media that returns {path on the CD: new contents} for answer_media.iso_replace
+ISO_EDITS = {"reactos-unattend": "reactos_unattend"}
 
 # The packages of the last test run (the PVE test node with the published packages).
 PACKAGES_2026_11_16 = {"pve-qemu-kvm": "11.1.3-2+wsh10", "qemu-server": "9.2.15+wsh6",
@@ -1715,7 +1722,7 @@ def problems():
                     not isinstance(size, int) or not re.fullmatch(r"[0-9a-f]{64}", digest)
                     for size, digest in f["files"].values()):
                 out.append(f"{fname}: made from files: a known conversion, the lab directory, (size, sha256) each")
-        elif "from" in med and (med["from"].get("name") not in MEDIA or med["from"].get("convert") not in CONVERSIONS):
+        elif "from" in med and (med["from"].get("name") not in MEDIA or med["from"].get("convert") not in {**CONVERSIONS, **ISO_EDITS}):
             out.append(f"{fname}: made from {med['from']}: a medium in MEDIA and a known conversion")
     for bname, b in POST_INSTALL.items():
         if b.get("medium") not in MEDIA:

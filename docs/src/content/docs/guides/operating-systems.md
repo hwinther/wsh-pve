@@ -20,6 +20,7 @@ This page is a work in progress. Driver packs, curated images, and detailed per-
 | NetBSD | sparc, sparc64 | NetBSD 11.1 installs and runs on sparc (SS-5, SS-20) and sparc64 (sun4u); the lab installs it with one command ([Lab install targets](/guides/lab-install/)) |
 | OpenBSD | sparc, sparc64 | OpenBSD 5.9, the last release for 32-bit sparc, installs and runs on the SS-5 and SS-20 with OpenBIOS and a serial display (`vga: serial0`; with `cg3` or `tcx` its kernel panics), one CPU (`openbsd59-ss5`, `openbsd59-ss20`; see the [SPARC guide](/guides/sparc/#installing-openbsd-59)). OpenBSD 8.0 installs and runs on sun4u with `pve-qemu-kvm` 11.1.3-2+wsh22 or later (OpenBIOS patch 0023; before, the installed kernel stops right after the loader); keep ntpd off (`rcctl disable ntpd`): with a reachable NTP server the IDE disk timed out after ntpd slewed the clock (rarely it times out and hangs without ntpd too). The lab installs both with one command (`openbsd59-ss5`, `openbsd59-ss20`, `openbsd80-sun4u`, [Lab install targets](/guides/lab-install/)) |
 | FreeBSD | sparc64 | FreeBSD 12.4, the last release with sparc64, installs and runs on sun4u with OpenBIOS (IDE disk, `hme0`, serial console); reboot and power-off need OpenBIOS patches 0032 and 0033, which aren't in a package yet. The lab installs it with one command (`freebsd124-sun4u`, [Lab install targets](/guides/lab-install/)) |
+| ReactOS 0.4.16 | x86_64 (i386 guest) | Installs from its CD on i440fx with IDE, std VGA (1024x768) and an RTL8139 or e1000, runs Win32 programs (our OpenGL game on its software Mesa); the lab installs it unattended with one command (`reactos0416`). See the [ReactOS guide](/guides/reactos/) |
 | MS-DOS 3+ | x86_64 | Performance improved with a curated set of drivers and patches |
 | Windows 1.x and up | x86_64 | Works with legacy display/network/audio devices |
 | Windows 9x | x86_64 | VBE-enhanced drivers, plus 3DFX/Mesa passthrough for 3D acceleration |
@@ -43,6 +44,13 @@ Solaris and SunOS run on the emulated SPARC platforms. See the dedicated [SPARC 
 <!-- TODO: link/publish the curated driver and patch collection referenced in the README -->
 
 MS-DOS 3 and later run on x86_64. Performance and compatibility improve significantly with a curated collection of drivers and patches. The [DOS guide](/guides/dos/) has the recommended VM, installing MS-DOS 6.22 from floppies by hand or with the lab, and what DOS gets of the first megabyte.
+
+## ReactOS
+
+ReactOS, the open-source NT-compatible system, runs on x86_64 in an ordinary i440fx VM. The
+[ReactOS guide](/guides/reactos/) has the VM, the install by hand and with the lab (unattended, from
+the release CD with an answer file), and what works: display, network, AC97 sound, Win32 and OpenGL
+programs.
 
 ## Windows
 

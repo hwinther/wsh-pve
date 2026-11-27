@@ -20,7 +20,7 @@ from these, all in the PVE test container (pve.Dockerfile):
                                               openbsd59-ss5, redhat62-ss5
   lab.py install <target> --check --out <runs>/install-<target>/1-install-<target>
                                               the same layout for one target: sol21-ss10, openbsd80-sun4u,
-                                              sunos413-ss10, sunos412-ss600mp
+                                              sunos413-ss10, sunos412-ss600mp, reactos0416
   pve_matrix.py recordings                    sol26-ss20-smp4, sol22-install-ss10
   lab.py install <target> --check [--gateway G --dns D] --out <runs>/install-<target>/1-install-<target>
                                               the 2026-11-26 sweep (published packages, two at a time):
@@ -180,6 +180,9 @@ VIDEOS = [
     ("sol26-disk-openbios-cg3-1024x768", "sol26-cg3-ss5"),  # display
     ("install-freedos14/1-install-freedos14/install", "freedos14-install"),  # install (VGA)
     ("install-freedos14/1-install-freedos14/check", "freedos14-boot"),
+    # lab.py install reactos0416 --check --out <runs>/install-reactos0416/1-install-reactos0416
+    ("install-reactos0416/1-install-reactos0416/install", "reactos0416-install"),  # install (VGA, then GUI)
+    ("install-reactos0416/1-install-reactos0416/check", "reactos0416-boot"),
 ]
 
 

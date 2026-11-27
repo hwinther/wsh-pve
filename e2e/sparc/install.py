@@ -190,6 +190,8 @@ def convert_medium(name, source, dest, checksum=True):
         raise InstallFailed(f"{name} is used as it is, not converted")
     if "files" in med["from"]:
         return convert_files(name, source, dest, checksum)
+    if med["from"]["convert"] in targets.ISO_EDITS:
+        return convert_iso_edit(name, source, dest, checksum)
     src = targets.MEDIA[med["from"]["name"]]
     size_in, offset, size_out = targets.CONVERSIONS[med["from"]["convert"]]
     if os.path.getsize(source) != src["size"]:
@@ -213,6 +215,30 @@ def convert_medium(name, source, dest, checksum=True):
         if os.path.exists(tmp):
             os.unlink(tmp)
     return h.hexdigest()
+
+
+def convert_iso_edit(name, source, dest, checksum=True):
+    """convert_medium for a CD made from another CD by replacing a few small files in place (MEDIA
+    "from" with a `convert` in targets.ISO_EDITS: the function of answer_media that returns
+    {path: bytes}, for answer_media.iso_replace): the source must be the tested medium, the result
+    must be the tested one byte for byte (ReactOS: the release CD with its answer file)."""
+    med = targets.MEDIA[name]
+    src = targets.MEDIA[med["from"]["name"]]
+    if os.path.getsize(source) != src["size"]:
+        raise InstallFailed(f"{source}: {os.path.getsize(source)} bytes, not {src['size']} ({med['from']['name']})")
+    if checksum and sha256(source) != src["sha256"]:
+        raise InstallFailed(f"{source}: not the tested {med['from']['name']} (sha256 {src['sha256']})")
+    if os.path.exists(dest):
+        raise InstallFailed(f"{dest} exists already")
+    edits = getattr(answer_media, targets.ISO_EDITS[med["from"]["convert"]])()
+    try:
+        digest = answer_media.iso_replace(source, dest, edits)
+    except ValueError as e:
+        raise InstallFailed(f"{source}: {e}")
+    if digest != med["sha256"]:
+        os.unlink(dest)
+        raise InstallFailed(f"the result's sha256 is {digest}, not the tested {med['sha256']}")
+    return digest
 
 
 def convert_files(name, source, dest, checksum=True):
@@ -1118,6 +1144,12 @@ def cmd_install(a):
         sys.exit(f"{a.target} is in the catalogue only, not automated: {t['blocked']}")
     disk_choice(t, a.disk_size)  # refuses a size the target wasn't tested with
     network_choice(t, a)  # refuses a network setting the target doesn't support
+    # settings the target's media fix (ReactOS: the answer file on its CD); their own value is accepted
+    own = {"root_password": targets.DEFAULT_ROOT_PASSWORD, "hostname": t.get("hostname")}
+    for opt, why in (t.get("fixed") or {}).items():
+        val = getattr(a, opt, None)
+        if val and val != own.get(opt):
+            sys.exit(f"--{opt.replace('_', '-')}: not with {a.target} ({why})")
     if a.data_disk is not None:
         if t.get("firstboot", {}).get("scenario") != "solaris-firstboot.py":
             sys.exit(f"--data-disk: only for the Solaris targets (their first boot sets it up), not {a.target}")
