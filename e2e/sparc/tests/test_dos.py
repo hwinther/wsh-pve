@@ -29,7 +29,9 @@ PVE_NICS = {"e1000", "ne2k_isa", "ne2k_pci", "pcnet", "rtl8139", "virtio", "vmxn
 
 class Targets(unittest.TestCase):
     def dos(self):
-        return {n: t for n, t in targets.TARGETS.items() if n in targets_dos.TARGETS}
+        # the DOS targets (floppies); ReactOS, the CD target in targets_dos.py, has tests/test_reactos.py
+        return {n: t for n, t in targets.TARGETS.items()
+                if n in targets_dos.TARGETS and targets.MEDIA[t["media"][0]["name"]]["content"] == "floppy"}
 
     def test_merged_into_the_catalogue(self):
         self.assertEqual(targets.problems(), [])

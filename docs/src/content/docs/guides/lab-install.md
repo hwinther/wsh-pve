@@ -63,6 +63,7 @@ enabled", which includes telnet; root logins are allowed on the console only).
 | `sunos413-ss10` | SunOS 4.1.3 (Solaris 1.1), Programmer, suninstall's Quick install | SS-10, OpenBIOS, 256 MB (64 MB during the install), one CPU, otherwise as `sunos414-ss5`; needs `pve-qemu-kvm` 11.1.3-2+wsh31 or later | `Solaris_1.1.img` | `root` / `wshlab` | ~6 min |
 | `msdos622` | MS-DOS 6.22 from the three Setup floppies | i440fx, SeaBIOS, Pentium, TCG, 32 MB, std VGA, 1 GiB IDE disk, ne2k_pci (unused), floppy first in the boot order; idle driver `WSHIDLE.COM` | `msdos622-disk1.img` ... `-disk3.img` (on `local:floppy/`) | none (no password; VGA console) | ~8 min |
 | `freedos14` | FreeDOS 1.4, Floppy Edition, base install | as `msdos622` | `freedos14-boot.img`, `freedos14-disk1.img` ... `-disk6.img` (on `local:floppy/`) | none (VGA console) | ~11 min |
+| `reactos0416` | ReactOS 0.4.16, unattended from its CD (the open-source NT 5.2 workalike; see the [ReactOS guide](/guides/reactos/)) | i440fx, SeaBIOS, `qemu64`, TCG, 1024 MB, `ostype: wxp` with `tdf: 0` (no `-rtc driftfix=slew`), std VGA (1024x768x32), 4 GiB IDE disk, the CD on `ide2`, `rtl8139` (DHCP by ReactOS), `serial0` for the logon report; `--root-password`, `--hostname` and `--user` are refused (the answer file on the CD sets them) | `reactos0416-wshlab.iso` (made from `ReactOS-0.4.16-i386.iso`, see "Media") | `Administrator` / `wshlab`, logs on by itself (VGA console) | ~17 min |
 | `openbsd80-sun4u` | OpenBSD 8.0, all sets but X11 (base, comp, man, game), ntpd off | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs `pve-qemu-kvm` 11.1.3-2+wsh22 or later (OpenBIOS patch 0023) | `install80.iso` | `root` / `wshlab` | ~19 min |
 | `freebsd124-sun4u` | FreeBSD 12.4 (the last release with sparc64), kernel and base | sun4u, OpenBIOS, 512 MB, serial console, 8 GiB blank disk on `ide0`, CD on `ide2`, sunhme; needs OpenBIOS patches 0032 and 0033 (not in a package yet: reboot and power-off) | `FreeBSD-12.4-RELEASE-sparc64-disc1.iso` | `root` / `wshlab` | ~16 min |
 | `openbsd59-ss5` | OpenBSD 5.9 (the last release for 32-bit sparc), all sets but X11 (base, comp, man, game), checked against the release's signature by the installer, ntpd off | SS-5, OpenBIOS, 256 MB, serial console (needed: with a framebuffer the kernel panics), 8 GiB blank disk on `scsi3`, the boot CD on `scsi6`, the sets CD on `scsi5`, lance (`le0`) | `cd59.iso`, `openbsd59-sparc-sets.iso` (made on the node, below) | `root` / `wshlab` | ~10 min |
@@ -423,6 +424,8 @@ software is never part of this project.
 | `FreeBSD-12.4-RELEASE-sparc64-disc1.iso` | 640942080 | `72abeb51bae9680b8354a623fcddadf98c67ae706c15f7e80054e1ba7764aaa9` |
 | `cd59.iso` (OpenBSD 5.9 sparc) | 4048896 | `34fb9b618b8d36bd7425e4505f1604f1bd23e1795b41bb19dc2cb9958fccc330` |
 | `openbsd59-sparc-sets.iso` (made from the 5.9 release's files, below) | 116387840 | `d1bd7d02404299396b57c3ed39e4c1fc928d9c1743e6702e10c11dcd05d8c6af` |
+| `ReactOS-0.4.16-i386.iso` (the release CD) | 406847488 | `6f15ca6e1edf5527b8489958d16c54f0da0e7948c305d7c89e74687c6cbf6855` |
+| `reactos0416-wshlab.iso` (made from it, below) | 406847488 | `215ac517acc28a0b2c99292a88311fa0efdb3ab682471bd431cc1e77cd3de559` |
 
 The NetBSD CDs are freely redistributable: download them from
 `https://cdn.netbsd.org/pub/NetBSD/NetBSD-11.1/images/` (the release's `SHA512` file has their
@@ -467,6 +470,20 @@ It checks each file's size and sha256 (those in the release's signed `SHA256`) a
 `openbsd59-sparc-sets.iso` only when the result has the checksum in the table above (the image is
 the same on every node: no dates, sorted names). The same CD serves `openbsd59-ss20`. The installer
 checks the sets again itself, against `SHA256.sig` with the release's key.
+
+**The ReactOS CD.** ReactOS is GPL and freely redistributable: `ReactOS-0.4.16-iso.zip` from the
+release `0.4.16-release` on `https://github.com/reactos/reactos/releases` has
+`ReactOS-0.4.16-i386.iso`. The target installs from a copy of it with the lab's answer file in
+`i386/unattend.inf` (the release's has `UnattendSetupEnabled = no`); the tool writes that copy and
+checks both files:
+
+```sh
+wsh-lab media reactos0416 --convert /path/to/ReactOS-0.4.16-i386.iso   # into local:iso/reactos0416-wshlab.iso
+```
+
+Only the answer file changes, in the sectors it already has on the CD; the result has the checksum
+in the table above. The answers (computer name `REACTOS`, Administrator password `wshlab`,
+1024x768x32, US English) are in `e2e/sparc/answer_media.py` (`REACTOS_UNATTEND`).
 
 The DOS targets' floppy images go on a storage with the **Floppy image** content type (no storage
 has it until it is enabled: `pvesm set local --content iso,vztmpl,backup,floppy`, the whole list),
