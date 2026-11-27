@@ -20,6 +20,13 @@ runs for the VM's bus:
 
 qemu-dbus-input converts absolute and relative motion as the guest's pointer takes it.
 
+The VM may stop and start again during a session (a Moonlight client paused and resumed keeps the
+runner): qemu-dbus-input exits when the VM leaves its bus ("closed", status 3; an older one keeps
+running and answers "error ... The connection is closed", and is then stopped), and the bridge
+starts a new one every RETRY seconds until the VM's next run is on the bus. Events that come
+meanwhile are dropped; the devices stay grabbed. The bridge itself ends only with the session
+(Wolf removes its devices), since Wolf ends a session whose runner exits.
+
 usage: wolf-input-bridge (--vmid N | --address ADDR) [--log FILE] [--wait SECONDS]
 
 With --log every forwarded command is written with the time it was read from the device
@@ -92,6 +99,109 @@ def open_device(node, wait):
     return fd
 
 
+RETRY = 1.0  # seconds between starts of qemu-dbus-input while the VM isn't on its bus
+
+
+class Bridge:
+    """qemu-dbus-input for the VM's bus, started again whenever it ends (the VM stopped, or
+    wasn't running yet). Its output goes to our stderr (Wolf's log)."""
+
+    def __init__(self, target):
+        self.target = target
+        self.proc = None
+        self.stdout = None
+        self.next_start = 0.0
+        self.buf = b""
+        self.starts = 0
+        self.quiet = False  # a failed try was reported: no more until one connects
+
+    def start(self):
+        self.starts += 1
+        # --timeout 2: a bus that is there but has no QEMU on it yet (the VM starting) fails soon,
+        # and the next try comes RETRY later
+        self.proc = subprocess.Popen(["qemu-dbus-input", "--timeout", "2", *self.target],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                     stderr=subprocess.STDOUT)
+        self.stdout = self.proc.stdout.fileno()
+        os.set_blocking(self.stdout, False)
+        self.buf = b""
+
+    def stop(self, why):
+        if self.proc is None:
+            return
+        if self.proc.poll() is None:
+            self.proc.kill()
+        rc = self.proc.wait()
+        self.read_output()
+        for f in (self.proc.stdin, self.proc.stdout):
+            try:
+                f.close()
+            except OSError:
+                pass
+        if not self.quiet or why != "not on the bus":
+            log(f"qemu-dbus-input ended ({why}, status {rc}): trying again every {RETRY:g} s")
+        self.quiet = why == "not on the bus"
+        self.proc = None
+        self.stdout = None
+        self.next_start = time.monotonic() + RETRY
+
+    def check(self):
+        """start one when there is none and it's time; notice one that ended"""
+        if self.proc is not None and self.proc.poll() is not None:
+            rc = self.proc.returncode
+            self.stop("the VM stopped" if rc == 3 else "not on the bus" if rc == 1 else "exited")
+        if self.proc is None and time.monotonic() >= self.next_start:
+            self.start()
+
+    def read_output(self):
+        if self.stdout is None:
+            return
+        try:
+            data = os.read(self.stdout, 4096)
+        except (BlockingIOError, OSError):
+            return
+        self.buf += data
+        *lines, self.buf = self.buf.split(b"\n")
+        for raw in lines:
+            line = raw.decode(errors="replace")
+            if line.startswith("ready"):
+                self.quiet = False
+            if line.startswith(("ready", "error", "mode")) or line == "closed":
+                log(f"qemu-dbus-input: {line}")
+            elif line.startswith("qemu-dbus-input:") and not self.quiet:
+                log(line)
+            # an older qemu-dbus-input doesn't exit when the VM goes away; its calls fail so
+            if "The connection is closed" in line and self.proc is not None:
+                self.proc.kill()
+
+    def write(self, line):
+        if self.proc is None or self.proc.poll() is not None:
+            return False
+        try:
+            self.proc.stdin.write((line + "\n").encode())
+            return True
+        except (BrokenPipeError, OSError):
+            return False
+
+    def flush(self):
+        if self.proc is None:
+            return
+        try:
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
+
+    def close(self):
+        """the session ended: let go of the keys (stdin's end) and stop"""
+        if self.proc is None:
+            return
+        try:
+            self.proc.stdin.close()
+            self.proc.wait(5)
+        except (BrokenPipeError, subprocess.TimeoutExpired, OSError):
+            self.proc.kill()
+
+
 def main():
     ap = argparse.ArgumentParser()
     g = ap.add_mutually_exclusive_group(required=True)
@@ -126,19 +236,23 @@ def main():
                 fcntl.ioctl(fd, eviocgabs(axis), info)
                 absmax[i] = struct.unpack("6i", info)[2] or absmax[i]
 
-    bridge = subprocess.Popen(["qemu-dbus-input", *target], stdin=subprocess.PIPE, text=True,
-                              bufsize=1)
+    bridge = Bridge(target)
 
     def send(line, t):
-        bridge.stdin.write(line + "\n")
-        if logf:
+        if bridge.write(line) and logf:
             logf.write(f"{t} {line}\n")
 
     state = {fd: {"dx": 0, "dy": 0, "x": None, "y": None, "moved": False} for fd in fds}
     try:
-        while bridge.poll() is None:
-            ready, _, _ = select.select(list(fds), [], [], 0.5)
+        while True:
+            bridge.check()
+            out = [bridge.stdout] if bridge.stdout is not None else []
+            ready, _, _ = select.select(list(fds) + out, [], [], 0.5)
+            if out and out[0] in ready:
+                bridge.read_output()
             for fd in ready:
+                if fd not in fds:
+                    continue
                 try:
                     data = os.read(fd, EVENT.size * 64)
                 except BlockingIOError:
@@ -174,15 +288,11 @@ def main():
                         if st["moved"] and st["x"] is not None and st["y"] is not None:
                             send(f"abs {st['x']} {st['y']} {absmax[0]} {absmax[1]}", t)
                             st["moved"] = False
-                bridge.stdin.flush()
-    except (BrokenPipeError, KeyboardInterrupt):
+                bridge.flush()
+    except KeyboardInterrupt:
         pass
     finally:
-        try:
-            bridge.stdin.close()
-            bridge.wait(5)
-        except (BrokenPipeError, subprocess.TimeoutExpired, OSError):
-            bridge.kill()
+        bridge.close()
     return 0
 
 

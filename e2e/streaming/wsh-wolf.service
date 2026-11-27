@@ -1,0 +1,27 @@
+# Wolf with one Moonlight app per PVE VM, in the streaming container (the Dockerfile's `ct`
+# template). `wolf-start VMID ...` writes the VMs and settings to /etc/default/wsh-wolf, enables
+# this unit and restarts it; from then on Wolf comes up with the container. The apps follow their
+# VMs through stops and starts (qemudbussrc and qemudbusaudiosrc reconnect=true, and
+# wolf-input-bridge starts its qemu-dbus-input again), so Wolf needn't be restarted for that.
+[Unit]
+Description=Wolf: Moonlight apps for PVE VMs' D-Bus displays
+After=network-online.target
+Wants=network-online.target
+ConditionPathExists=/etc/default/wsh-wolf
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/default/wsh-wolf
+WorkingDirectory=/root
+ExecStart=/usr/local/bin/wolf-start --exec
+StandardOutput=append:/var/log/wolf.log
+StandardError=inherit
+Restart=on-failure
+RestartSec=5
+# Wolf stops its sessions on SIGTERM; one that hangs on its way out (seen on a node: a crash in
+# its exit path, then its crash handler hung) is killed after this
+KillMode=mixed
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

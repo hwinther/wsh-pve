@@ -15,13 +15,16 @@ display, the pieces a streaming server on a PVE node (stage 3 of the 3dfx/stream
   EGL device, drawn into a framebuffer as `BGRx` and read back with `glReadPixels`; the rows are
   read again 20 ms later, since NVIDIA's driver doesn't make the read wait for QEMU's drawing).
   `dmabuf-import=mmap` keeps to linear ones, `dmabuf-import=egl` reads all through EGL (the tests),
-  `render-node=` picks the GPU.
+  `render-node=` picks the GPU. When the VM stops it sends EOS, or with `reconnect=true` keeps the
+  last picture and listens to the VM's next run (also starting before the VM runs).
 - **`qemudbusaudiosrc`**: the guest's playback (`-audiodev dbus`) as live PCM, scaled by the guest
   mixer's volume (`apply-volume`), with silence in real time while the guest plays nothing
-  (`silence`), so the stream has no gaps and its timestamps never go back.
+  (`silence`), so the stream has no gaps and its timestamps never go back; `reconnect=true` as for
+  `qemudbussrc`.
 - **`qemu-dbus-input`**: keyboard, buttons, relative and absolute motion from text commands on
   standard input to the console's `Keyboard` and `Mouse` interfaces, as relative or absolute motion
-  as the guest's pointer takes it (`IsAbsolute`). The protocol is in `debian/qemu-dbus-input.1`.
+  as the guest's pointer takes it (`IsAbsolute`); it prints `closed` and exits 3 when QEMU leaves
+  the bus. The protocol is in `debian/qemu-dbus-input.1`.
 
 The code is ours (C, GLib/GIO and GStreamer 1.26 from Debian 13, built with meson). It doesn't use
 qemu-display's Rust crates: GStreamer elements and QEMU's D-Bus display are both GLib, so GIO's

@@ -211,7 +211,12 @@ qemu-dbus-input --vmid 130                                                 # inp
   property `dmabuf-import` is `auto` (that), `mmap` (linear only, other frames dropped) or `egl`
   (all through EGL); `render-node=` picks the GPU when there are several. The element needs the
   GPU's EGL library where it runs (NVIDIA's, in a container: see [On a node](#on-a-node)). The
-  mouse cursor isn't drawn into the picture. When the VM stops it ends the stream (EOS).
+  mouse cursor isn't drawn into the picture. When the VM stops it ends the stream (EOS); with
+  `reconnect=true` it doesn't: it keeps the last picture, tries every half second to listen on the
+  VM's bus again (qemu-server gives the VM's next run a new bus on the same socket path), and goes
+  on with the next run's picture (renegotiating if its size changed). It then also starts while the
+  VM isn't running and waits for it. Downstream gets no buffer meanwhile, so a live `compositor`
+  after it (as in Wolf's apps) repeats the last picture and a stream survives a VM restart.
 - **`qemudbusaudiosrc`** gives the guest's playback as raw PCM as QEMU sends it (48 kHz signed
   16-bit stereo with qemu-server's audio driver `dbus`), in 10 ms buffers. QEMU passes the guest
   mixer's volume and mute separately; the element applies them (`apply-volume=false` passes the
@@ -219,6 +224,8 @@ qemu-dbus-input --vmid 130                                                 # inp
   with silence in real time (`silence=false` doesn't), so the stream has no gaps and its timestamps
   run on without jumping back: a gap made Wolf's `audiorate` push the whole pause as silence at
   once when the sound came, and the leaky queue before it dropped the sound's start meanwhile.
+  `reconnect=true` works as for `qemudbussrc`: silence goes on while the VM is stopped, and the
+  next run's sound follows.
 - **`qemu-dbus-input`** reads lines like `key 30 1` (Linux key code, press) and `key 30 0`
   (release), `btn left 1`, `wheel -1`, `rel 10 5` and `abs 640 400` (or `abs X Y W H`, scaled from a
   W x H client window), and sends them to the console's keyboard and mouse. QEMU takes absolute
@@ -226,13 +233,17 @@ qemu-dbus-input --vmid 130                                                 # inp
   and relative motion only from a relative one (PS/2 with `tablet: 0`, the Sun mouse); the bridge
   converts either to what the guest has, and says `mode absolute` or `mode relative`. `query` gives
   the mode and the console's size, `sync` waits for QEMU's answers. Keys still down when its input
-  ends are released. `man qemu-dbus-input` has the whole protocol.
+  ends are released. When QEMU leaves the bus (the VM stopped) it prints `closed` and exits with
+  status 3, so a caller can start it again for the VM's next run (as `wolf-input-bridge` does).
+  `man qemu-dbus-input` has the whole protocol.
 - **Tested** (`packages/wsh-gst-qemu-dbus/test.sh`, in CI; TCG, no GPU): wisp's framebuffer
   kernels on x86 (std VGA, PS/2, AC97), on aarch64's virt (virtio tablet, AC97), on the SS-5 (cg3,
   CS4231, Sun mouse) and on x86 with `dbus,gl=on` (the dmabufs mapped, and again through EGL on
   Mesa's software device): the frame identical to QEMU's screendump, keys in the guest 5 ms after
   the bridge read them, relative and absolute motion and buttons, a 440 Hz tone of 2.00 s at
-  440.0 Hz without a dropout, the end of stream when QEMU quits. Also through PVE (`qm start` of a
+  440.0 Hz without a dropout, the end of stream when QEMU quits, and with `reconnect=true` a VM
+  stopped and started again with its bus (both elements started before the VM, kept running while
+  it was stopped and went on with its next run; the bridge exited 3). Also through PVE (`qm start` of a
   `display=dbus` and a `mesa-display=dbus` VM), and on a node with an NVIDIA GPU: a
   `mesa-display=dbus` VM's block-linear dmabufs through EGL, the frame identical to QEMU's
   screendump in four runs out of four.
@@ -250,16 +261,22 @@ source (`[profiles.apps.video] source = ...` in its configuration), while Sunshi
 X11, Wayland or NvFBC and would need a capture backend of its own. Each VM is one Moonlight app:
 
 ```text
-qemudbussrc address=unix:path=/run/wsh-dbus-display/<vmid>.sock ! compositor ! video/x-raw,framerate={fps}/1
+qemudbussrc address=unix:path=/run/wsh-dbus-display/<vmid>.sock reconnect=true
+  ! videoscale ! video/x-raw,width={width},height={height} ! compositor ! video/x-raw,framerate={fps}/1
   ! videoconvertscale ! videorate ! video/x-raw,width={width},height={height},format=I420,...
   ! x264enc tune=zerolatency ...                      (Wolf's software H.264 encoder settings)
-qemudbusaudiosrc address=... ! ... ! opusenc ...      (Wolf's Opus settings)
+qemudbusaudiosrc address=... reconnect=true ! ... ! opusenc ...      (Wolf's Opus settings)
 runner: wolf-input-bridge --address ...               (Moonlight's keyboard and mouse into the VM)
 ```
 
 - **Video**: `qemudbussrc` sends a buffer only when the picture changes, but Moonlight ends a session
   that gets no video for 10 seconds, so a `compositor` repeats the newest picture at the client's
-  frame rate. Wolf scales it to the client's size and encodes it.
+  frame rate. The picture is scaled to the client's size before it, since the compositor keeps
+  the size it negotiated first. With NVENC both can be done on the GPU ("Scaling on the GPU" under
+  [On a node](#on-a-node)).
+- **VM restarts**: the sources have `reconnect=true` and the bridge starts its `qemu-dbus-input`
+  again when the VM comes back, so a stream (or a paused session, resumed) follows the VM through
+  `qm stop`/`qm start` or `qm reboot`; the client shows the last picture meanwhile.
 - **Sound**: `qemudbusaudiosrc` (the VM needs `audio0: ...,driver=dbus`).
 - **Input**: Wolf turns the client's keyboard and mouse into virtual Linux input devices
   (`/dev/uinput`): "Wolf (virtual) keyboard" (Moonlight's Windows key codes already mapped to Linux
@@ -275,7 +292,8 @@ runner: wolf-input-bridge --address ...               (Moonlight's keyboard and 
 - **Files** (`e2e/streaming` in wsh-pve): `Dockerfile` (Wolf, moonlight-embedded and the probe
   client, all from source at pinned commits on Debian 13; its `ct` stage is a container template
   for a node), `wolf-config.py` (writes Wolf's `config.toml` with an app per VM from Wolf's
-  defaults, keeping paired clients), `wolf-start` (PulseAudio and Wolf in that container),
+  defaults, keeping paired clients), `wolf-start` and `wsh-wolf.service` (PulseAudio and Wolf in
+  that container, started with it),
   `wolf-input-bridge`, `wolf-pair` (enters a client's PIN through Wolf's API socket), `node.sh`,
   `moonlight-probe.c`, `stream3d.py` and `test.sh`.
 
@@ -359,6 +377,15 @@ EOF
 pct start <ctid>
 pct exec <ctid> -- wolf-start <vmid>              # PulseAudio, Wolf, the app "wsh-vm-<vmid>"
 ```
+
+`wolf-start <vmid> ...` saves the VMs and its settings (`H264_ENCODER`, `SCALER`, `ASPECT`,
+`SRC_PROPS`, below) in the container's `/etc/default/wsh-wolf` and enables and restarts
+`wsh-wolf.service`, so Wolf comes up with the container from then on with the same apps; run it
+again to change them (`wolf-start --stop` disables the unit). Wolf logs to `/var/log/wolf.log`
+(appended to). The VMs needn't be running when Wolf starts, and an app follows its VM through a stop
+and a start (see [Streaming to Moonlight](#streaming-to-moonlight)): Wolf needn't be restarted for
+that. Asked to stop, Wolf sometimes didn't exit (below, "Open issues"); the unit and `wolf-start`
+kill it after 15 seconds.
 
 - The bus directory goes to `/srv/wsh-dbus-display`, not `/run/...`: the container's systemd
   mounts its own `/run` over a bind mount there. The directory must exist when the container
@@ -492,8 +519,8 @@ pct exec <ctid> -- env -i HOME=/root PATH=/usr/local/bin:/usr/bin:/bin wolf-pair
 
 `wolf-pair` waits up to 60 seconds for the request and answers it; the client then lists one app
 per VM, `wsh-vm-<vmid>`. Pairings are kept in the container's `/etc/wolf/cfg/config.toml`, also
-when `wolf-start` runs again. Wolf doesn't start by itself with the container: run `wolf-start`
-after the container starts (the VMs must be running for their apps to stream).
+when `wolf-start` runs again. Wolf starts with the container (`wsh-wolf.service`, enabled by the
+first `wolf-start <vmid> ...`).
 
 **NVIDIA GPU: NVENC.** Add the GPU's devices and NVIDIA's libraries of the node's driver version
 (here installed with NVIDIA's installer, not packages; copy them from the node), then start Wolf
@@ -513,8 +540,37 @@ pct exec <ctid> -- env H264_ENCODER=nvenc wolf-start <vmid>
 
 Wolf doesn't pick NVENC by itself here: its NVIDIA pipeline also needs `cudaconvertscale`, which
 needs the CUDA toolkit's runtime compiler (`libnvrtc`), not part of the driver. `H264_ENCODER=nvenc`
-gives the apps `nvh264enc` (Wolf's settings: CBR, zero latency, preset p1, ultra-low-latency tune)
-on NV12 in system memory.
+gives the apps `nvh264enc` (Wolf's settings: CBR, zero latency, preset p1, ultra-low-latency tune).
+
+**Scaling on the GPU.** The guest's picture is often small (640x480, 800x600) and changes size with
+the guest's mode; the client wants its own (1920x1080, 2560x1440). Without the CUDA elements the
+apps scale it to the client's size, repeat it and convert it to NV12 on the CPU, at the client's
+size (`videoscale`, `compositor`, `videoconvertscale`), then copy that to the GPU for `nvh264enc`.
+With them (`SCALER=cuda`, the default with NVENC when they are there) only the guest's picture at
+its own size goes to the GPU, and everything after it stays there:
+
+```text
+qemudbussrc ... ! videoconvert ! cudaupload
+  ! cudacompositor background=black sink_0::width={width} sink_0::height={height}
+  ! video/x-raw(memory:CUDAMemory),width={width},height={height},framerate={fps}/1
+  ! cudaconvertscale ! video/x-raw(memory:CUDAMemory),format=NV12,... ! nvh264enc ...
+```
+
+(`videoconvert` passes the picture through unless `cudaupload` can't take its format, such as a
+16-bit mode's RGB16.) The CUDA elements compile their kernels at run time with NVIDIA's runtime
+compiler: install Debian's `libnvrtc12` (non-free; the `ct` template has it) in the container.
+`wolf-start` points GStreamer at it (`GST_CUDA_NVRTC_LIBNAME=libnvrtc.so.12`) and keeps GStreamer's
+plugin registry in `/run/wolf`, so that it is made again at each start (a cached one keeps what an
+older scan found, without the CUDA elements):
+
+```sh
+pct exec <ctid> -- sh -c 'sed -i "s/^Components: main$/Components: main non-free/" /etc/apt/sources.list.d/debian.sources && apt-get update && apt-get install -y --no-install-recommends libnvrtc12'
+pct exec <ctid> -- env -i HOME=/root PATH=/usr/local/bin:/usr/bin:/bin H264_ENCODER=nvenc wolf-start <vmid>
+```
+
+`wolf-config.py` says which it picked (`SCALER=cuda` or `cpu`) in Wolf's log; `SCALER=cpu` keeps the
+CPU path. `ASPECT=keep` keeps the guest's aspect ratio with black borders (a 4:3 guest on a 16:9
+client) instead of stretching it (`ASPECT=stretch`, the default), on either path.
 
 **NVIDIA GPU: `dbus,gl=on`.** A VM with `mesa=1,mesa-display=dbus` (the 3dfx binary) hands the
 console to `qemudbussrc` as dmabufs in NVIDIA's block-linear layout (`XB24`, modifier
@@ -741,24 +797,45 @@ its monitor.
 
 ### Open issues seen on a node
 
-Seen while streaming a Windows 98 Glide VM through Wolf on a PVE node (November 2026). Not fixed;
-(b) and (c) are not understood yet.
+Seen while streaming a Windows 98 Glide VM through Wolf on a PVE node (November 2026). (a), (d)
+and (e) have changes in wsh-pve (not yet run on the node); (b) and (c) are not understood yet.
 
-- **(a) Wolf's input bridge keeps the old VM bus after a VM restart.** After `qm stop` and `qm start`
-  of the VM, `wolf-input-bridge` stays connected to the D-Bus socket of the VM's previous run, so
-  the client's keyboard and mouse no longer reach the guest. Running `wolf-start <vmid>` again in
-  the container brings the input back. This should happen by itself (the bridge reconnecting when
-  the VM's bus goes away and comes back).
+- **(a) Wolf's apps kept the old VM bus after a VM restart, and Wolf didn't start with its
+  container.** After `qm stop` and `qm start` of the VM, `wolf-input-bridge` stayed connected to the
+  D-Bus socket of the VM's previous run (its `qemu-dbus-input` didn't notice the bus going away), so
+  the client's keyboard and mouse no longer reached the guest, and `qemudbussrc` ended the video
+  pipeline (EOS) when the VM stopped. Now: `qemu-dbus-input` exits (3) when QEMU leaves the bus and
+  the bridge starts it again until the VM's next run is there; the sources run with
+  `reconnect=true`; and `wsh-wolf.service` starts Wolf with the container (see
+  [On a node](#on-a-node)). Tested in containers without Wolf (`packages/wsh-gst-qemu-dbus/test.sh`,
+  and the bridge's restart loop against a VM stopped and started); not yet through Wolf and
+  Moonlight on the node.
 - **(b) A Windows 98 guest with the USB tablet hung after its desktop loaded** while Moonlight sent
   input early, twice, under TCG and under KVM. Whether the tablet is the cause is a suspicion only:
   a run with `tablet: 0` (the PS/2 mouse) is being tested.
 - **(c) A fatal exception 0E in VWIN32** when `WSHSPACE.EXE` was quit with Escape, under TCG. Not
   reproduced under KVM yet.
-- **(d) Scaling and conversion on the CPU.** With Moonlight at the client's native resolution,
-  Wolf's pipeline scales and converts the picture on the CPU (`videoscale`, `videoconvertscale`)
-  before `nvh264enc`. Wolf's own default apps upload to the GPU first and scale and convert there
-  (`cudaupload`, `cudaconvertscale`); doing the same in `wolf-config.py` for NVENC is a candidate
-  follow-up.
+- **(d) Scaling and conversion on the CPU.** With Moonlight at the client's native resolution, the
+  apps scaled and converted the picture on the CPU (`videoscale`, `compositor`,
+  `videoconvertscale`) at the client's size before `nvh264enc`. Now `SCALER=cuda` (the default
+  with NVENC when GStreamer's CUDA elements are there, which needs `libnvrtc12` in the container)
+  does it on the GPU ("Scaling on the GPU" above). Not yet run on a GPU: the pipeline's syntax and
+  the CUDA elements' properties are from GStreamer 1.26's documentation, not from a run.
+- **(e) Wolf didn't exit when asked to stop.** After a VM reset, `wolf-start` waited for good after
+  `pkill -x wolf`; a `SIGKILL` ended it. Wolf's crash dump (`/root/backtrace.<time>.dump` in the
+  container, printed by the next Wolf at its start) shows a `SIGSEGV` in an HTTP server thread
+  logging a request (`endpoints::serverinfo`, in `boost::log`'s `core::get_logging_enabled`): the
+  main thread had returned after its graceful shutdown and the process was running its exit
+  handlers (static destructors) while Wolf's other threads still ran. Wolf's `SIGSEGV` handler then
+  dumps the stack and calls `exit()` again from the signal handler, which can block for good, as
+  here. The burst of `EVP_EncryptInit_ex failed` / `EVP_EncryptUpdate failed` lines just before
+  fits the same exit: Wolf's crypto helpers only print OpenSSL's errors (they don't stop), and its
+  audio payloader encrypts every packet with a fresh cipher context, which fails once OpenSSL's
+  exit handler has cleaned up while that thread still streams (not proven: those lines have no
+  time stamps). Two earlier dumps in the container (November 26) look the same. Now both
+  `wolf-start` and `wsh-wolf.service` kill a Wolf that hasn't exited 15 seconds after `SIGTERM`.
+  The fix in Wolf itself would be to leave without running the exit handlers once the sessions
+  are stopped (`_exit`), or to join its threads first: an upstream report.
 
 ## VGA retrace
 

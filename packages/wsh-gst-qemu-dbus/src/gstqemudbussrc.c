@@ -25,7 +25,12 @@
  * Every change since the last buffer makes one buffer: a copy of the whole picture, in the
  * console's own format (BGRx for QEMU's usual x8r8g8b8), timestamped with the running time it was
  * taken at (a live source with a variable frame rate, framerate=0/1; videorate makes a fixed one).
- * When QEMU closes the connection (the VM stopped) the element sends EOS.
+ * When QEMU closes the connection (the VM stopped) the element sends EOS. With reconnect=true it
+ * doesn't: it keeps the last picture, connects again (every RECONNECT_INTERVAL_MS) until the VM
+ * runs again (qemu-server gives a VM's next run a new bus on the same socket path), registers its
+ * listener there and goes on with the new run's picture, renegotiating if its size changed. It
+ * also starts while the VM isn't running, and waits for it. Downstream gets no buffer meanwhile
+ * (a live compositor after it repeats the last one), so a stream survives a VM restart.
  *
  * Copyright 2026 WsHosting ENK. License: GPL-3 (see debian/copyright).
  */
@@ -106,6 +111,7 @@ enum
   PROP_SHARED_MAP,
   PROP_DMABUF_IMPORT,
   PROP_RENDER_NODE,
+  PROP_RECONNECT,
   PROP_STATS,
 };
 
@@ -141,6 +147,12 @@ gst_qemu_dbus_dmabuf_import_get_type (void)
 #define DEFAULT_TIMEOUT 10
 #define DEFAULT_SHARED_MAP TRUE
 #define DEFAULT_DMABUF_IMPORT DMABUF_IMPORT_AUTO
+#define DEFAULT_RECONNECT FALSE
+
+/* reconnect=true: how often to try, and how long one try may wait for QEMU on the new bus (the
+ * streaming thread tries, so this also bounds how long a state change can wait for it) */
+#define RECONNECT_INTERVAL_MS 500
+#define RECONNECT_TIMEOUT_MS 2000
 
 #define SRC_FORMATS "{ BGRx, BGRA, RGBx, RGBA, xRGB, ARGB, BGR, RGB, RGB16, RGB15 }"
 
@@ -167,6 +179,7 @@ struct _GstQemuDBusSrc
   gboolean shared_map;
   DmabufImport dmabuf_import;
   gchar *render_node;
+  gboolean reconnect;
 
   QemuDBusPeer *peer;
   GDBusNodeInfo *node;
@@ -175,6 +188,7 @@ struct _GstQemuDBusSrc
   GCond cond;
   gboolean flushing;
   gboolean eos;
+  gboolean lost;                /* reconnect=true: QEMU went away (or wasn't there yet) */
 
   /* the console's picture, under lock */
   PictureKind kind;
@@ -208,6 +222,7 @@ struct _GstQemuDBusSrc
   guint64 n_scanout, n_update, n_map_scanout, n_map_update, n_dmabuf_scanout, n_dmabuf_update;
   guint64 n_dmabuf_unmapped, n_frames, n_dmabuf_egl, n_settle, n_settle_changed;
   gint64 dmabuf_us_total, dmabuf_us_max;        /* UpdateDMABUF: from its arrival to the reply */
+  guint64 n_reconnects;
   gboolean warned_modifier;
 };
 
@@ -843,42 +858,26 @@ on_closed (gpointer user_data)
 {
   GstQemuDBusSrc *src = GST_QEMU_DBUS_SRC (user_data);
 
-  GST_INFO_OBJECT (src, "QEMU closed the connection: end of stream");
   g_mutex_lock (&src->lock);
-  src->eos = TRUE;
+  if (src->reconnect) {
+    GST_INFO_OBJECT (src, "QEMU closed the connection: waiting for the VM to run again");
+    src->lost = TRUE;
+  } else {
+    GST_INFO_OBJECT (src, "QEMU closed the connection: end of stream");
+    src->eos = TRUE;
+  }
   g_cond_broadcast (&src->cond);
   g_mutex_unlock (&src->lock);
 }
 
-static gboolean
-gst_qemu_dbus_src_start (GstBaseSrc * bsrc)
+/* Registers the listener on the VM's bus at address, on the console's object path */
+static QemuDBusPeer *
+listen_start (GstQemuDBusSrc * src, const gchar * address, const gchar * path,
+    guint timeout_ms, GError ** error)
 {
-  GstQemuDBusSrc *src = GST_QEMU_DBUS_SRC (bsrc);
-  GError *error = NULL;
-  gchar *address, *path;
   GDBusInterfaceInfo *interfaces[3];
   QemuDBusPeerConfig config = { 0 };
 
-  address = qemudbus_resolve_address (src->address, src->vmid);
-  if (!address) {
-    GST_ELEMENT_ERROR (src, RESOURCE, SETTINGS, ("No D-Bus address"),
-        ("set address (e.g. unix:path=/run/wsh-dbus-display/<vmid>.sock) or vmid"));
-    return FALSE;
-  }
-  g_mutex_lock (&src->lock);
-  picture_release (src);
-  src->eos = FALSE;
-  src->flushing = FALSE;
-  src->have_info = FALSE;
-  src->warned_modifier = FALSE;
-  src->gl_failed = FALSE;
-  src->n_scanout = src->n_update = src->n_map_scanout = src->n_map_update = 0;
-  src->n_dmabuf_scanout = src->n_dmabuf_update = src->n_dmabuf_unmapped = src->n_frames = 0;
-  src->n_dmabuf_egl = src->n_settle = src->n_settle_changed = 0;
-  src->dmabuf_us_total = src->dmabuf_us_max = 0;
-  g_mutex_unlock (&src->lock);
-
-  path = g_strdup_printf ("/org/qemu/Display1/Console_%u", src->console);
   interfaces[0] = src->node->interfaces[0];
   interfaces[1] = src->node->interfaces[1];
   interfaces[2] = NULL;
@@ -891,8 +890,109 @@ gst_qemu_dbus_src_start (GstBaseSrc * bsrc)
   config.vtable = &listener_vtable;
   config.user_data = src;
   config.closed = on_closed;
-  config.timeout_ms = src->timeout * 1000;
-  src->peer = qemudbus_peer_start (&config, &error);
+  config.timeout_ms = timeout_ms;
+  return qemudbus_peer_start (&config, error);
+}
+
+static gchar *
+console_path (GstQemuDBusSrc * src)
+{
+  return g_strdup_printf ("/org/qemu/Display1/Console_%u", src->console);
+}
+
+/*
+ * reconnect=true, QEMU gone: drops the old connection and tries to listen on the VM's bus again
+ * until that works (TRUE) or the element is flushing (FALSE). On the streaming thread, called and
+ * returning with the lock held. The picture stays as it was until the new run sends its own.
+ */
+static gboolean
+reconnect (GstQemuDBusSrc * src)
+{
+  gchar *address = qemudbus_resolve_address (src->address, src->vmid);
+  gchar *path = console_path (src);
+  guint tries = 0;
+  gboolean ok = FALSE;
+
+  while (!src->flushing) {
+    QemuDBusPeer *old = src->peer, *peer;
+    GError *error = NULL;
+    gint64 until;
+
+    src->peer = NULL;
+    g_mutex_unlock (&src->lock);
+    if (old) {
+      /* joins its thread (on_closed ran there); the EGL context was current on it */
+      qemudbus_peer_stop (old);
+      settle_clear (src);
+#ifdef HAVE_EGL
+      g_clear_pointer (&src->gl, qemudbus_gl_free);
+#endif
+    }
+    peer = listen_start (src, address, path, RECONNECT_TIMEOUT_MS, &error);
+    g_mutex_lock (&src->lock);
+    if (peer) {
+      src->peer = peer;
+      src->lost = FALSE;
+      src->n_reconnects++;
+      GST_INFO_OBJECT (src, "listening on %s, %s again (shared map %s)", address, path,
+          src->shared_map ? "offered" : "not offered");
+      ok = TRUE;
+      break;
+    }
+    /* the first failure, then one line a minute */
+    if (tries++ % (60000 / RECONNECT_INTERVAL_MS) == 0)
+      GST_INFO_OBJECT (src, "waiting for the VM on %s: %s", address, error->message);
+    g_error_free (error);
+    until = g_get_monotonic_time () + RECONNECT_INTERVAL_MS * G_TIME_SPAN_MILLISECOND;
+    while (!src->flushing && g_cond_wait_until (&src->cond, &src->lock, until));
+  }
+  g_free (address);
+  g_free (path);
+  return ok;
+}
+
+static gboolean
+gst_qemu_dbus_src_start (GstBaseSrc * bsrc)
+{
+  GstQemuDBusSrc *src = GST_QEMU_DBUS_SRC (bsrc);
+  GError *error = NULL;
+  gchar *address, *path;
+
+  address = qemudbus_resolve_address (src->address, src->vmid);
+  if (!address) {
+    GST_ELEMENT_ERROR (src, RESOURCE, SETTINGS, ("No D-Bus address"),
+        ("set address (e.g. unix:path=/run/wsh-dbus-display/<vmid>.sock) or vmid"));
+    return FALSE;
+  }
+  g_mutex_lock (&src->lock);
+  picture_release (src);
+  src->eos = FALSE;
+  src->lost = FALSE;
+  src->flushing = FALSE;
+  src->have_info = FALSE;
+  src->warned_modifier = FALSE;
+  src->gl_failed = FALSE;
+  src->n_scanout = src->n_update = src->n_map_scanout = src->n_map_update = 0;
+  src->n_dmabuf_scanout = src->n_dmabuf_update = src->n_dmabuf_unmapped = src->n_frames = 0;
+  src->n_dmabuf_egl = src->n_settle = src->n_settle_changed = 0;
+  src->dmabuf_us_total = src->dmabuf_us_max = 0;
+  src->n_reconnects = 0;
+  g_mutex_unlock (&src->lock);
+
+  path = console_path (src);
+  src->peer = listen_start (src, address, path,
+      src->reconnect ? RECONNECT_TIMEOUT_MS : src->timeout * 1000, &error);
+  if (!src->peer && src->reconnect) {
+    /* the VM isn't running (yet): create() waits for it */
+    GST_INFO_OBJECT (src, "waiting for the VM on %s: %s", address, error->message);
+    g_error_free (error);
+    g_mutex_lock (&src->lock);
+    src->lost = TRUE;
+    g_mutex_unlock (&src->lock);
+    g_free (address);
+    g_free (path);
+    return TRUE;
+  }
   if (!src->peer) {
     GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, ("Can't listen to QEMU's D-Bus display"),
         ("%s, %s: %s", address, path, error->message));
@@ -916,12 +1016,12 @@ stats_string (GstQemuDBusSrc * src)
       G_GUINT64_FORMAT " dmabuf-updates=%" G_GUINT64_FORMAT " dmabuf-unread=%" G_GUINT64_FORMAT
       " dmabuf-egl-scanouts=%" G_GUINT64_FORMAT " egl-settle-reads=%" G_GUINT64_FORMAT
       "/%" G_GUINT64_FORMAT " dmabuf-reply-us=%" G_GINT64_FORMAT "/%" G_GINT64_FORMAT
-      " frames=%" G_GUINT64_FORMAT,
+      " frames=%" G_GUINT64_FORMAT " reconnects=%" G_GUINT64_FORMAT,
       src->n_scanout, src->n_update, src->n_map_scanout, src->n_map_update,
       src->n_dmabuf_scanout, src->n_dmabuf_update, src->n_dmabuf_unmapped, src->n_dmabuf_egl,
       src->n_settle, src->n_settle_changed,
       src->n_dmabuf_update ? src->dmabuf_us_total / (gint64) src->n_dmabuf_update : 0,
-      src->dmabuf_us_max, src->n_frames);
+      src->dmabuf_us_max, src->n_frames, src->n_reconnects);
 }
 
 static gboolean
@@ -1028,11 +1128,18 @@ gst_qemu_dbus_src_create (GstPushSrc * psrc, GstBuffer ** outbuf)
   for (;;) {
     GstCaps *caps;
 
-    while (!src->dirty && !src->flushing && !src->eos)
+    while (!src->dirty && !src->flushing && !src->eos && !src->lost)
       g_cond_wait (&src->cond, &src->lock);
     if (src->flushing) {
       g_mutex_unlock (&src->lock);
       return GST_FLOW_FLUSHING;
+    }
+    if (src->lost && !src->dirty) {
+      if (!reconnect (src)) {
+        g_mutex_unlock (&src->lock);
+        return GST_FLOW_FLUSHING;
+      }
+      continue;
     }
     if (!src->dirty) {
       g_mutex_unlock (&src->lock);
@@ -1118,6 +1225,9 @@ gst_qemu_dbus_src_set_property (GObject * object, guint prop_id, const GValue * 
       if (src->render_node && !*src->render_node)
         g_clear_pointer (&src->render_node, g_free);
       break;
+    case PROP_RECONNECT:
+      src->reconnect = g_value_get_boolean (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -1151,6 +1261,9 @@ gst_qemu_dbus_src_get_property (GObject * object, guint prop_id, GValue * value,
       break;
     case PROP_RENDER_NODE:
       g_value_set_string (value, src->render_node);
+      break;
+    case PROP_RECONNECT:
+      g_value_set_boolean (value, src->reconnect);
       break;
     case PROP_STATS:
       g_mutex_lock (&src->lock);
@@ -1228,6 +1341,11 @@ gst_qemu_dbus_src_class_init (GstQemuDBusSrcClass * klass)
           "The GPU whose EGL device imports the dmabufs (e.g. /dev/dri/renderD128, QEMU's "
           "rendernode=); unset: the first GPU, else a software device", NULL,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY));
+  g_object_class_install_property (gobject_class, PROP_RECONNECT,
+      g_param_spec_boolean ("reconnect", "Reconnect",
+          "When the VM stops, keep the last picture and wait for its next run instead of "
+          "ending the stream (EOS); also start before the VM runs", DEFAULT_RECONNECT,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY));
   g_object_class_install_property (gobject_class, PROP_STATS,
       g_param_spec_string ("stats", "Statistics",
           "What QEMU sent and how many buffers went out", NULL,
@@ -1258,6 +1376,7 @@ gst_qemu_dbus_src_init (GstQemuDBusSrc * src)
   src->timeout = DEFAULT_TIMEOUT;
   src->shared_map = DEFAULT_SHARED_MAP;
   src->dmabuf_import = DEFAULT_DMABUF_IMPORT;
+  src->reconnect = DEFAULT_RECONNECT;
   src->dmabuf_fd = -1;
   src->node = g_dbus_node_info_new_for_xml (LISTENER_XML, NULL);
   g_assert (src->node);
