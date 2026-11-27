@@ -1,35 +1,21 @@
 diff --git a/debian/changelog b/debian/changelog
-index d578b516..d0ec2067 100644
+index 8040ad36..99e0d480 100644
 --- a/debian/changelog
 +++ b/debian/changelog
-@@ -1,10 +1,30 @@
-+pve-manager (9.2.41+wsh3) trixie; urgency=medium
+@@ -1,10 +1,16 @@
++pve-manager (9.3.1+wsh1) trixie; urgency=medium
 +
-+  * feat(pve-qemu): SS-600MP PROM reaches ok by itself and installs
-+    SunOS 4.1.2 (#560)
++  * Sync with upstream pve-manager 4cbab75
 +
-+ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Thu, 26 Nov 2026 21:58:11 +0000
++ -- Hans Christian Winther-Sorensen <hc@wsh.no>  Fri, 27 Nov 2026 02:48:10 +0000
 +
-+pve-manager (9.2.41+wsh2) trixie; urgency=medium
-+
-+  * fix(sparc): boot Solaris on SS-10/SS-20 with up to 2048 MB (#532)
-+  * Refresh patches: pve-manager,qemu-server,pve-storage
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 25 Nov 2026 18:27:20 +0000
-+
-+pve-manager (9.2.41+wsh1) trixie; urgency=medium
-+
-+  * Sync with upstream pve-manager 2744df6
-+
-+ -- hwinther <hwinther@users.noreply.github.com>  Wed, 25 Nov 2026 07:38:40 +0000
-+
- pve-manager (9.2.41) trixie; urgency=medium
+ pve-manager (9.3.1) trixie; urgency=medium
  
-   * ui: SAN:
-     - also detect disabled storages of external storage plugins when opening
-       the LUN wipe confirmation, so the confirmation still asks to verify
-       that no storage plugin uses the LUN.
-     - when adding a multipath entry, also check a WWID that was typed before
-       the node's LUN list finished loading, so that Enter no longer adds only
-       a part of a listed WWID. A part of a WWID that the list does not offer,
-       for example of an NVMe namespace, no longer counts as invalid.
+   * ui: container network: load configured network devices independently
+     of runtime interface queries, so a slow or failing interface lookup
+     no longer hides configured interfaces, and show the actual API error
+     message if loading the configuration fails. Avoid updating or
+     masking the view after navigating away from it or when a newer
+     reload is already in progress.
+ 
+  -- Proxmox Support Team <support@proxmox.com>  Wed, 25 Nov 2026 12:37:47 +0100
