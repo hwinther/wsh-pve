@@ -1307,6 +1307,31 @@ class OlderSun(unittest.TestCase):
         self.assertIn("wsh/0189", t["tested"]["packages"]["pve-qemu-kvm"])
         self.assertEqual(targets.problems(), [])
 
+    def test_solaris_ss600mp_prom_targets(self):
+        # Solaris 2.1-2.5.1 under Sun's 600MP PROM (pve-qemu wsh/0190: the MXCC stream registers' RDY
+        # bit): each is its SS-10 or SS-5 target with the SS-600MP, bios ss600mp.bin and 256 MB; the
+        # scenarios, disk and media unchanged. 2.6 and later refuse the machine, so no later targets.
+        pairs = {"sol21-ss600mp-prom": "sol21-ss10", "sol22-ss600mp-prom": "sol22-ss10",
+                 "sol23-ss600mp-prom": "sol23-ss5", "sol24-ss600mp-prom": "sol24-ss5",
+                 "sol25-ss600mp-prom": "sol25-ss5", "sol251-ss600mp-prom": "sol251-ss5"}
+        for name, base_name in pairs.items():
+            with self.subTest(name):
+                base, t = targets.TARGETS[base_name], targets.TARGETS[name]
+                self.assertEqual(t["status"], "automated")
+                self.assertIn(name, targets.automated())
+                self.assertEqual(t["profile"], {**base["profile"], "machine": "SS-600MP", "bios": "ss600mp.bin",
+                                                "memory": 256})
+                for phase in ("install", "firstboot", "check"):
+                    self.assertEqual(t[phase], base[phase])
+                self.assertEqual((t["disk"], t["media"], t["boot"], t["net_modes"]),
+                                 (base["disk"], base["media"], base["boot"], base["net_modes"]))
+                self.assertEqual(t["hostname"], name)
+                self.assertIn("600MP PROM", t["title"])
+                self.assertIn("wsh/0191", t["tested"]["packages"]["pve-qemu-kvm"])
+        self.assertFalse([n for n in targets.TARGETS if n.startswith(("sol26-", "sol7-", "sol8-", "sol9-"))
+                          and "ss600mp" in n])
+        self.assertEqual(targets.problems(), [])
+
     def test_serial_7bit(self):
         # SERIAL_7BIT: SunOS 4.1.2's getty sends even parity in bit 7 ("sunos412 login: " arrives with
         # some letters | 0x80); the terminal and the text see 7 bits, serial.raw keeps what came

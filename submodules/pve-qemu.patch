@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..92e6040 100644
+index bc240a0..c033a94 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,144 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,146 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -218,6 +218,8 @@ index bc240a0..92e6040 100644
 +wsh/0187-tests-qtest-test-the-SS-600MP-s-MXCC-MBus-registers-.patch
 +wsh/0188-hw-sparc-sun4m-give-the-SS-600MP-boot-PROM-a-configu.patch
 +wsh/0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf.patch
++wsh/0190-target-sparc-let-the-SS-600MP-s-MXCC-stream-register.patch
++wsh/0191-tests-qtest-test-the-MXCC-stream-registers-RDY-bit.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -28857,6 +28859,268 @@ index 0000000..452569d
 +     qtest_add_func("sun4m-ss600mp/audio-regs", test_audio_regs);
 ++    qtest_add_func("sun4m-ss600mp/prom-nvram", test_prom_nvram);
 +     qtest_add_func("sun4m-ss600mp/ss10-unchanged", test_ss10_unchanged);
++ 
++     return g_test_run();
+diff --git a/debian/patches/wsh/0190-target-sparc-let-the-SS-600MP-s-MXCC-stream-register.patch b/debian/patches/wsh/0190-target-sparc-let-the-SS-600MP-s-MXCC-stream-register.patch
+new file mode 100644
+index 0000000..0dd8a0b
+--- /dev/null
++++ b/debian/patches/wsh/0190-target-sparc-let-the-SS-600MP-s-MXCC-stream-register.patch
+@@ -0,0 +1,147 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] target/sparc: let the SS-600MP's MXCC stream registers read
++ back RDY
++
++Solaris 2.1-2.5.1 booted by Sun's SS-600MP boot PROM hung right after
++the kernel's "clock gained ... days" warning, the CPU spinning in a two
++instruction loop with nothing more on the console. The PROM's root node
++has the bcopy? property (a block copy engine), so the kernel zeroes and
++copies pages with the MXCC's stream registers (ASI 2): it stores the
++stream data, writes the physical address to the stream destination
++register (0x01c00200) or source register (0x01c00100), and then loads
++that register until RDY, bit 63, is set. QEMU moves the block on the
++store but never answered a load of those two registers, so the kernel
++read 0 for ever. Under OpenBIOS, which has no bcopy?, the kernel copies
++with the CPU and never got there.
++
++New CPU feature mxcc-stream-rdy, set by the SS-600MP machine (no CPU
++model has it by default): a doubleword load of either stream register
++returns the address last written with RDY set, as a stream operation
++is complete as soon as QEMU has done the store. Other machines and the
++other MXCC registers are unchanged.
++
++With it the Solaris 2.1, 2.2, 2.3, 2.4, 2.5 and 2.5.1 CDs boot to the
++installer's first question under the PROM.
++---
++ hw/sparc/sun4m.c               | 18 ++++++++++++++++--
++ target/sparc/cpu-feature.h.inc |  1 +
++ target/sparc/cpu.c             |  3 +++
++ target/sparc/ldst_helper.c     | 18 ++++++++++++++++++
++ 4 files changed, 38 insertions(+), 2 deletions(-)
++
++diff --git a/hw/sparc/sun4m.c b/hw/sparc/sun4m.c
++index cbff407f..da4a6e73 100644
++--- a/hw/sparc/sun4m.c
+++++ b/hw/sparc/sun4m.c
++@@ -130,6 +130,7 @@ struct sun4m_hwdef {
++     bool esp_cdb_lun;           /* no IDENTIFY: the ESP's LUN from the CDB */
++     bool mbus_mxcc;             /* an MXCC's registers in its MBus space */
++     bool prom_config;           /* Sun's PROM: its configuration area */
+++    bool mxcc_stream_rdy;       /* mxcc-stream-rdy: stream RDY reads 1 */
++ };
++ 
++ struct Sun4mMachineClass {
++@@ -1180,7 +1181,8 @@ static bool sun4m_cpu_store_error(void *opaque, hwaddr addr, unsigned size,
++ }
++ 
++ static DeviceState *cpu_devinit(const char *cpu_type, unsigned int id,
++-                                uint64_t prom_addr, bool buserr_trap)
+++                                uint64_t prom_addr, bool buserr_trap,
+++                                bool mxcc_stream_rdy)
++ {
++     SPARCCPU *cpu;
++     CPUSPARCState *env;
++@@ -1197,6 +1199,10 @@ static DeviceState *cpu_devinit(const char *cpu_type, unsigned int id,
++         object_property_set_bool(OBJECT(cpu), "buserr-trap", true,
++                                  &error_abort);
++     }
+++    if (mxcc_stream_rdy) {
+++        object_property_set_bool(OBJECT(cpu), "mxcc-stream-rdy", true,
+++                                 &error_abort);
+++    }
++     qdev_init_gpio_in_named(cpudev, cpu_set_irq, "pil", MAX_PILS);
++     qdev_realize_and_unref(cpudev, NULL, &error_fatal);
++     cpu_sparc_set_id(env, id);
++@@ -1398,7 +1404,8 @@ static void sun4m_hw_init(MachineState *machine)
++     /* init CPUs */
++     for(i = 0; i < smp_cpus; i++) {
++         cpus[i] = cpu_devinit(machine->cpu_type, i, hwdef->slavio_base,
++-                              hwdef->sbus_bus_errors);
+++                              hwdef->sbus_bus_errors,
+++                              hwdef->mxcc_stream_rdy);
++         /* With more CPUs, one gives another work without an interrupt */
++         SPARC_CPU(cpus[i])->env.sunos_idle = sun4m_sunos_idle && smp_cpus == 1;
++         SPARC_CPU(cpus[i])->env.solaris_idle = sun4m_solaris_idle &&
++@@ -1942,6 +1949,13 @@ static void ss600mp_class_init(ObjectClass *oc, const void *data)
++          * configuration area instead.
++          */
++         .prom_config = true,
+++        /*
+++         * Its boot PROM's root node has bcopy? (a block copy engine), so
+++         * Solaris 2.x zeroes and copies pages with the MXCC's stream
+++         * registers and then polls them for RDY (bit 63); QEMU completes
+++         * a stream operation on the store.
+++         */
+++        .mxcc_stream_rdy = true,
++         .nvram_machine_id = 0x71,
++         .machine_id = ss600mp_id,
++         /*
++diff --git a/target/sparc/cpu-feature.h.inc b/target/sparc/cpu-feature.h.inc
++index eb8195d7..9ec90a33 100644
++--- a/target/sparc/cpu-feature.h.inc
+++++ b/target/sparc/cpu-feature.h.inc
++@@ -21,3 +21,4 @@ FEATURE(BOOT_MODE_IFETCH) /* Boot mode sends fetches to the PROM, MMU on or off
++ FEATURE(SBUF_DIAG) /* SuperSPARC store buffer diagnostic registers */
++ FEATURE(CACHE_DIAG) /* SuperSPARC cache tag and data RAMs (ASI 0x0c-0x0f) */
++ FEATURE(BUSERR_TRAP) /* A failed load traps, MMU on or off (SS-600MP) */
+++FEATURE(MXCC_STREAM_RDY) /* MXCC stream registers read back with RDY */
++diff --git a/target/sparc/cpu.c b/target/sparc/cpu.c
++index eb4c2ed2..c0795a3c 100644
++--- a/target/sparc/cpu.c
+++++ b/target/sparc/cpu.c
++@@ -583,6 +583,7 @@ static const char * const feature_name[] = {
++     [CPU_FEATURE_BIT_SBUF_DIAG] = "sbuf-diag",
++     [CPU_FEATURE_BIT_CACHE_DIAG] = "cache-diag",
++     [CPU_FEATURE_BIT_BUSERR_TRAP] = "buserr-trap",
+++    [CPU_FEATURE_BIT_MXCC_STREAM_RDY] = "mxcc-stream-rdy",
++ #endif
++ };
++ 
++@@ -1030,6 +1031,8 @@ static const Property sparc_cpu_properties[] = {
++                     CPU_FEATURE_BIT_CACHE_DIAG, false),
++     DEFINE_PROP_BIT("buserr-trap", SPARCCPU, env.def.features,
++                     CPU_FEATURE_BIT_BUSERR_TRAP, false),
+++    DEFINE_PROP_BIT("mxcc-stream-rdy", SPARCCPU, env.def.features,
+++                    CPU_FEATURE_BIT_MXCC_STREAM_RDY, false),
++ #endif
++     DEFINE_PROP_UNSIGNED("iu-version", SPARCCPU, env.def.iu_version, 0,
++                          qdev_prop_uint64, target_ulong),
++diff --git a/target/sparc/ldst_helper.c b/target/sparc/ldst_helper.c
++index 95d4baff..34b5a56b 100644
++--- a/target/sparc/ldst_helper.c
+++++ b/target/sparc/ldst_helper.c
++@@ -836,6 +836,24 @@ uint64_t helper_ld_asi(CPUSPARCState *env, target_ulong addr,
++                               size);
++             }
++             break;
+++        case 0x01c00100: /* MXCC stream source */
+++        case 0x01c00200: /* MXCC stream destination */
+++            /*
+++             * mxcc-stream-rdy (set by the SPARCserver 600MP machine): the
+++             * stream registers read back with RDY (bit 63) set. QEMU moves
+++             * a stream block at once on the store, so an operation is
+++             * always complete; Solaris 2.x polls RDY after its stream
+++             * stores and spun forever on the 0 read before.
+++             */
+++            if (size == 8 && env->def.mxcc_version &&
+++                (env->def.features & CPU_FEATURE_MXCC_STREAM_RDY)) {
+++                ret = env->mxccregs[addr == 0x01c00100 ? 0 : 1] | (1ULL << 63);
+++            } else {
+++                qemu_log_mask(LOG_UNIMP,
+++                              "%08x: unimplemented address, size: %d\n", addr,
+++                              size);
+++            }
+++            break;
++         case 0x01c00a00: /* MXCC control register */
++             if (size == 8) {
++                 ret = env->mxccregs[3];
+diff --git a/debian/patches/wsh/0191-tests-qtest-test-the-MXCC-stream-registers-RDY-bit.patch b/debian/patches/wsh/0191-tests-qtest-test-the-MXCC-stream-registers-RDY-bit.patch
+new file mode 100644
+index 0000000..d540c62
+--- /dev/null
++++ b/debian/patches/wsh/0191-tests-qtest-test-the-MXCC-stream-registers-RDY-bit.patch
+@@ -0,0 +1,103 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the MXCC stream registers' RDY bit
++
++sun4m-viking-diag-test cases stream/ss600mp, stream/ss10 and
++stream/ss20: a boot PROM built by the test fills the MXCC stream data
++registers, writes the stream destination register with a physical
++address and reads it back, then does the same with the stream source
++register. On every machine the block reaches memory and comes back;
++on the SS-600MP (mxcc-stream-rdy) both registers read back as the
++address with RDY (bit 63) set, on the SS-10 and SS-20 as 0, as before.
++The SS-600MP case fails without the mxcc-stream-rdy patch.
++---
++ tests/qtest/sun4m-viking-diag-test.c | 61 ++++++++++++++++++++++++++++
++ 1 file changed, 61 insertions(+)
++
++diff --git a/tests/qtest/sun4m-viking-diag-test.c b/tests/qtest/sun4m-viking-diag-test.c
++index aa884c93..633e43b8 100644
++--- a/tests/qtest/sun4m-viking-diag-test.c
+++++ b/tests/qtest/sun4m-viking-diag-test.c
++@@ -12,6 +12,12 @@
++  * sets DONE. The migration case writes, sets DONE to 1, waits for GO on
++  * the destination, then reads back and sets DONE to 2.
++  *
+++ * The stream cases: Solaris 2.x, booted by that PROM, zeroes and copies
+++ * pages with the MXCC's stream registers and then polls the stream
+++ * destination register until RDY (bit 63) is set. On the SS-600MP
+++ * (mxcc-stream-rdy) both stream registers read back with RDY set; the
+++ * other machines keep reading them as nothing (0).
+++ *
++  * SPDX-License-Identifier: GPL-2.0-or-later
++  */
++ 
++@@ -380,8 +386,57 @@ static void test_migrate(void)
++     unlink(prom);
++ }
++ 
+++/* A stream block moved to and from physical memory here */
+++#define STREAM_PA       0x3000u
+++#define STREAM_RDY      0x8000000000000000ULL
+++
+++static const Op stream_ops[] = {
+++    { ST64, 0x02, 0x01c00000, PAT },
+++    { ST64, 0x02, 0x01c00008, ONES },
+++    { ST64, 0x02, 0x01c00010, ~PAT },
+++    { ST64, 0x02, 0x01c00018, 0x5a5a5a5a5a5a5a5aULL },
+++    { ST64, 0x02, 0x01c00200, STREAM_PA },          /* stream destination */
+++    { LD64, 0x02, 0x01c00200 },
+++    { ST64, 0x02, 0x01c00000, 0 },
+++    { ST64, 0x02, 0x01c00100, STREAM_PA },          /* stream source */
+++    { LD64, 0x02, 0x01c00100 },
+++    { LD64, 0x02, 0x01c00008 },                     /* data 1 read back */
+++};
+++
+++typedef struct {
+++    const char *name;
+++    const char *machine;
+++    bool rdy;           /* the stream registers read back with RDY */
+++} StreamCase;
+++
+++static void test_stream(const void *data)
+++{
+++    const StreamCase *t = data;
+++    g_autofree char *prom = write_prom(stream_ops, ARRAY_SIZE(stream_ops));
+++    QTestState *qts = qtest_initf("-machine %s -accel tcg -m 64 -bios %s",
+++                                  t->machine, prom);
+++    uint64_t want = t->rdy ? STREAM_RDY | STREAM_PA : 0;
+++
+++    wait_done(qts, 2);
+++    /* the block went to memory and came back, on every machine */
+++    g_assert_cmphex(qtest_readq(qts, STREAM_PA), ==, PAT);
+++    g_assert_cmphex(qtest_readq(qts, STREAM_PA + 8), ==, ONES);
+++    g_assert_cmphex(qtest_readq(qts, STREAM_PA + 16), ==, ~PAT);
+++    g_assert_cmphex(result(qts, 2), ==, ONES);
+++    /* destination, then source */
+++    g_assert_cmphex(result(qts, 0), ==, want);
+++    g_assert_cmphex(result(qts, 1), ==, want);
+++    qtest_quit(qts);
+++    unlink(prom);
+++}
+++
++ int main(int argc, char **argv)
++ {
+++    static const StreamCase stream_cases[] = {
+++        { "ss600mp", "SS-600MP", true },
+++        { "ss10", "SS-10", false },
+++        { "ss20", "SS-20", false },
+++    };
++     static const TestCase cases[] = {
++         { "ss600mp", "SS-600MP", NULL, true, true, true },
++         { "ss10", "SS-10", NULL, true, true, true },
++@@ -403,6 +458,12 @@ int main(int argc, char **argv)
++             qtest_add_data_func(name, &cases[i], test_diag);
++         }
++         qtest_add_func("sun4m-viking-diag/ss600mp/migrate", test_migrate);
+++        for (i = 0; i < ARRAY_SIZE(stream_cases); i++) {
+++            g_autofree char *name =
+++                g_strdup_printf("sun4m-viking-diag/stream/%s",
+++                                stream_cases[i].name);
+++            qtest_add_data_func(name, &stream_cases[i], test_stream);
+++        }
++     }
 + 
 +     return g_test_run();
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides

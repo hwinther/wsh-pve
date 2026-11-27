@@ -1206,6 +1206,17 @@ then the ones that installed got targets:
   profile and the image in `/usr/share/kvm` (no package has it; `wsh-sun-proms` knows its hash).
   sunos-install-serial.py's Sun PROM path unchanged: `boot cdrom`, the miniroot booted by the PROM from
   its reboot string, `boot disk` for the first boot and the check. Results through PVE below.
+- **`sol21-ss600mp-prom`, `sol22-`, `sol23-`, `sol24-`, `sol25-` and `sol251-ss600mp-prom`**
+  (Solaris 2.1-2.5.1 under the same PROM): each is the SS-10 (2.1, 2.2) or SS-5 target of its
+  release (`_ss600mp_prom()` in `targets.py`) with the SS-600MP, `bios: ss600mp.bin` and 256 MB: the
+  same scenarios, CD as a disk and answers; `prom_boot()` types `boot cdrom` and `boot disk` at the
+  PROM's `ok`. They need pve-qemu `wsh/0190` (the MXCC stream registers' RDY bit, which the kernels
+  poll because the PROM's root node has `bcopy?`; without it every release hangs after `clock gained
+  ... days`) besides what `sunos412-ss600mp-prom` needs. After 2.1's, 2.2's and 2.3's `init 5` the PROM
+  reboots with `-a` and stops at the boot program's `Enter filename` question, which `power_off()`
+  takes as the end. Solaris 2.6 and later refuse the machine by name ("This hardware platform is not
+  supported by this release of Solaris"), so there are no later targets (`submodules/SPARC.md`, "Sun's
+  own SS-600MP boot PROM", item 13). Results through PVE below.
 - **`sunos413-ss10`** (the original SunOS 4.1.3, Solaris 1.1, SS-10 only): the `sunos414-ss5`
   target with its own CD (`Solaris_1.1.img`, 2048-byte sectors, no `--convert`) and the SS-10's
   profile (256 MB, one CPU, OpenBIOS): the same three scenarios unchanged, 64 MB during the install.
@@ -1284,6 +1295,22 @@ with `ss600mp.bin` copied over theirs, the PROM image in `/usr/share/kvm`), 2026
 | `install sunos412-ss600mp --check` (the OpenBIOS target, same node and build) | passed | 5.7 min (132 s, 147 s, 47 s) |
 | the SS-600MP cases of `sparc-profiles.spec.ts` against that node | 12 passed, 1 skipped (the older qemu-server's refusal) | |
 | unit tests (`test_targets.py`) | 137 passed | |
+
+**`sol21-ss600mp-prom` to `sol251-ss600mp-prom` through PVE** (the same kind of node: the lab's PVE
+container image with the published packages, pve-qemu-kvm 11.1.3-4+wsh30 and qemu-server 9.2.24+wsh3,
+qemu-system-sparc built from the series to `wsh/0191`, qemu-server's `Machine.pm` and `QemuServer.pm`
+from main, the PROM image in `/usr/share/kvm`), one install at a time, 2026-11-26/27:
+
+| Run | Result | Time (install, first boot, check) |
+| --- | --- | --- |
+| `install sol21-ss600mp-prom --check`, twice | passed both; `SunOS sol21-ss600mp-prom 5.1 Generic sun4m sparc`, the marker, `le0` 10.0.2.15/24 (the first boot and the check end at the boot program's `Enter filename`) | 9.8 min (304, 184, 87 s); 10.4 min (298, 214, 98 s) |
+| `install sol22-ss600mp-prom --check`, twice | passed both (as 2.1) | 8.7 min (274, 149, 86 s); 8.8 min (276, 150, 86 s) |
+| `install sol23-ss600mp-prom --check`, twice | passed both (as 2.1) | 9.1 min (292, 151, 88 s); 9.0 min (292, 150, 86 s) |
+| `install sol24-ss600mp-prom --check`, twice | passed both | 8.8 min (296, 138, 74 s); 9.3 min (330, 137, 73 s) |
+| `install sol25-ss600mp-prom --check`, twice | passed both | 8.9 min (273, 165, 80 s); 9.3 min (294, 166, 79 s) |
+| `install sol251-ss600mp-prom --check`, twice | passed both (the install's time is mostly 2.5.1's Maintenance Update) | 36.3 min (1906, 170, 87 s); 36.8 min (1935, 170, 86 s) |
+| `install sunos412-ss600mp-prom --check` (regression, same build) | passed | 6.1 min (140, 156, 56 s) |
+| unit tests (`test_targets.py`) | 138 passed | |
 
 On the cg3 (the stored disk in the lab's own QEMU, `fb-bell.py GUEST=sunos4 MACHINE=SS-600MP
 VGA=cg3`, console on the framebuffer and the Sun keyboard): `boot disk:a -s` boots 4.1.2 to its
