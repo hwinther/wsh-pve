@@ -315,12 +315,301 @@ const scenarios: LivingMuseumScenario[] = [
           poster: "npt:0:10",
         },
       },
+      {
+        label: "Single user (cg3 framebuffer)",
+        media: {
+          kind: "video",
+          src: "/recordings/sunos412-cg3-single-user-ss600mp.webm",
+          captions: "/recordings/sunos412-cg3-single-user-ss600mp.vtt",
+          poster: "/recordings/sunos412-cg3-single-user-ss600mp-poster.png",
+          width: 1024,
+          height: 768,
+          caption:
+            "SunOS 4.1.2 booting the installed disk to single user on a cg3 (1024x768), SPARCserver 600MP " +
+            "with OpenBIOS in the lab's QEMU, then the bell test",
+        },
+      },
     ],
     tryIt: {
       command: "wsh-lab install sunos412-ss600mp --check",
       note:
         "needs pve-qemu-kvm 11.1.3-3+wsh13 or later and the SS-600MP profile (lab-install.md); " +
         "6.2 minutes in the run that made this recording (install 143 s, first boot 150 s, check 51 s; e2e/sparc/README.md)",
+    },
+  },
+  {
+    id: "sunos412-ss600mp-prom",
+    machine: "ss600mp-prom",
+    machineLabel: "SPARCserver 600MP, Sun PROM",
+    os: "sunos412",
+    osLabel: "SunOS 4.1.2",
+    osFamily: "SunOS",
+    blurb:
+      "The same SunOS 4.1.2 install under Sun's own 600MP boot PROM (ss600mp.bin): the PROM stops at ok " +
+      "on ttya, the lab types boot cdrom, the PROM boots the miniroot from its reboot string by itself, " +
+      "and boot disk for the first boot and the check. One CPU, 256 MB in every phase.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sunos412-install-ss600mp-prom.cast",
+          caption: "SunOS 4.1.2 install from CD, SPARCserver 600MP with the Sun PROM under PVE, serial console",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sunos412-boot-ss600mp-prom.cast",
+          caption: "SunOS 4.1.2 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sunos412-ss600mp-prom --check",
+      note:
+        "needs the 600MP PROM image in /usr/share/kvm and pve-qemu up to wsh/0188 (lab-install.md); 6.5 " +
+        "minutes in the run that made this recording (install 158 s, first boot 160 s, check 55 s)",
+    },
+  },
+  {
+    id: "sol21-ss600mp-prom",
+    machine: "ss600mp-prom",
+    machineLabel: "SPARCserver 600MP, Sun PROM",
+    os: "sol21",
+    osLabel: "Solaris 2.1",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.1 (SunOS 5.1) End User, the install of sol21-ss10 unchanged, under Sun's 600MP PROM " +
+      "(ss600mp.bin): the CD as a disk, boot cdrom and boot disk typed at the PROM's ok. Needs pve-qemu " +
+      "patch wsh/0190 (the MXCC stream registers' RDY bit; without it the kernel hangs after its clock " +
+      "warning). After init 5 the PROM reboots with -a and stops at the boot program's Enter filename " +
+      "question, which ends each boot. One CPU, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol21-install-ss600mp-prom.cast",
+          caption: "Solaris 2.1 install, SPARCserver 600MP with the Sun PROM under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol21-boot-ss600mp-prom.cast",
+          caption: "Solaris 2.1 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol21-ss600mp-prom --check",
+      note:
+        "needs the 600MP PROM image in /usr/share/kvm and pve-qemu up to wsh/0190 (lab-install.md); 12.0 " +
+        "minutes in the run that made this recording (install 342 s, first boot 272 s, check 89 s)",
+    },
+  },
+  {
+    id: "sol22-ss600mp-prom",
+    machine: "ss600mp-prom",
+    machineLabel: "SPARCserver 600MP, Sun PROM",
+    os: "sol22",
+    osLabel: "Solaris 2.2",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.2 End User, the install of sol22-ss10 unchanged, under Sun's 600MP PROM (ss600mp.bin): " +
+      "the CD as a disk, boot cdrom and boot disk typed at the PROM's ok. Needs pve-qemu patch wsh/0190 " +
+      "(the MXCC stream registers' RDY bit; without it the kernel hangs after its clock warning). After " +
+      "init 5 the PROM reboots with -a and stops at the boot program's Enter filename question, which " +
+      "ends each boot. One CPU, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol22-install-ss600mp-prom.cast",
+          caption: "Solaris 2.2 install, SPARCserver 600MP with the Sun PROM under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol22-boot-ss600mp-prom.cast",
+          caption: "Solaris 2.2 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol22-ss600mp-prom --check",
+      note:
+        "needs the 600MP PROM image in /usr/share/kvm and pve-qemu up to wsh/0190 (lab-install.md); 8.7 " +
+        "minutes in the run that made this recording (install 278 s, first boot 148 s, check 84 s)",
+    },
+  },
+  {
+    id: "sol23-ss600mp-prom",
+    machine: "ss600mp-prom",
+    machineLabel: "SPARCserver 600MP, Sun PROM",
+    os: "sol23",
+    osLabel: "Solaris 2.3",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.3 Edition II End User, the install of sol23-ss5 unchanged, under Sun's 600MP PROM " +
+      "(ss600mp.bin): the CD as a disk, boot cdrom and boot disk typed at the PROM's ok. Needs pve-qemu " +
+      "patch wsh/0190 (the MXCC stream registers' RDY bit; without it the kernel hangs after its clock " +
+      "warning). After init 5 the PROM reboots with -a and stops at the boot program's Enter filename " +
+      "question, which ends each boot. One CPU, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol23-install-ss600mp-prom.cast",
+          caption: "Solaris 2.3 Edition II install, SPARCserver 600MP with the Sun PROM under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol23-boot-ss600mp-prom.cast",
+          caption: "Solaris 2.3 Edition II booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol23-ss600mp-prom --check",
+      note:
+        "needs the 600MP PROM image in /usr/share/kvm and pve-qemu up to wsh/0190 (lab-install.md); 9.0 " +
+        "minutes in the run that made this recording (install 291 s, first boot 151 s, check 86 s)",
+    },
+  },
+  {
+    id: "sol24-ss600mp-prom",
+    machine: "ss600mp-prom",
+    machineLabel: "SPARCserver 600MP, Sun PROM",
+    os: "sol24",
+    osLabel: "Solaris 2.4",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.4 HW 3/95 End User, the install of sol24-ss5 unchanged, under Sun's 600MP PROM " +
+      "(ss600mp.bin): the CD as a disk, boot cdrom and boot disk typed at the PROM's ok. Needs pve-qemu " +
+      "patch wsh/0190 (the MXCC stream registers' RDY bit; without it the kernel hangs after its clock " +
+      "warning). One CPU, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol24-install-ss600mp-prom.cast",
+          caption: "Solaris 2.4 HW 3/95 install, SPARCserver 600MP with the Sun PROM under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol24-boot-ss600mp-prom.cast",
+          caption: "Solaris 2.4 HW 3/95 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol24-ss600mp-prom --check",
+      note:
+        "needs the 600MP PROM image in /usr/share/kvm and pve-qemu up to wsh/0190 (lab-install.md); 7.6 " +
+        "minutes in the run that made this recording (install 239 s, first boot 132 s, check 72 s)",
+    },
+  },
+  {
+    id: "sol25-ss600mp-prom",
+    machine: "ss600mp-prom",
+    machineLabel: "SPARCserver 600MP, Sun PROM",
+    os: "sol25",
+    osLabel: "Solaris 2.5",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.5 HW 1/96 End User, the install of sol25-ss5 unchanged, under Sun's 600MP PROM " +
+      "(ss600mp.bin): the CD as a disk, boot cdrom and boot disk typed at the PROM's ok. Needs pve-qemu " +
+      "patch wsh/0190 (the MXCC stream registers' RDY bit; without it the kernel hangs after its clock " +
+      "warning). One CPU, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol25-install-ss600mp-prom.cast",
+          caption: "Solaris 2.5 HW 1/96 install, SPARCserver 600MP with the Sun PROM under PVE (2x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol25-boot-ss600mp-prom.cast",
+          caption: "Solaris 2.5 HW 1/96 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol25-ss600mp-prom --check",
+      note:
+        "needs the 600MP PROM image in /usr/share/kvm and pve-qemu up to wsh/0190 (lab-install.md); 8.8 " +
+        "minutes in the run that made this recording (install 268 s, first boot 164 s, check 79 s)",
+    },
+  },
+  {
+    id: "sol251-ss600mp-prom",
+    machine: "ss600mp-prom",
+    machineLabel: "SPARCserver 600MP, Sun PROM",
+    os: "sol251",
+    osLabel: "Solaris 2.5.1",
+    osFamily: "Solaris 2.x",
+    blurb:
+      "Solaris 2.5.1 11/97 End User, the install of sol251-ss5 unchanged (most of it the Maintenance " +
+      "Update), under Sun's 600MP PROM (ss600mp.bin): the CD as a disk, boot cdrom and boot disk typed " +
+      "at the PROM's ok. Needs pve-qemu patch wsh/0190 (the MXCC stream registers' RDY bit; without it " +
+      "the kernel hangs after its clock warning). One CPU, 256 MB.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol251-install-ss600mp-prom.cast",
+          caption: "Solaris 2.5.1 11/97 install, SPARCserver 600MP with the Sun PROM under PVE (4x)",
+          poster: "npt:0:10",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "cast",
+          src: "/recordings/sol251-boot-ss600mp-prom.cast",
+          caption: "Solaris 2.5.1 11/97 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE",
+          poster: "npt:0:10",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install sol251-ss600mp-prom --check",
+      note:
+        "needs the 600MP PROM image in /usr/share/kvm and pve-qemu up to wsh/0190 (lab-install.md); 37.8 " +
+        "minutes in the run that made this recording (install 1992 s, first boot 172 s, check 88 s)",
     },
   },
   {

@@ -32,9 +32,18 @@ from these, all in the PVE test container (pve.Dockerfile):
                                               debian40-ss20 (a route out), debian7-sun4u
                                               and last the Web Start installs: sol8-ss5, sol8-ss5-prom,
                                               sol8-ss20, sol9-ss5, sol9-ss20, sol8-sun4u
+  lab.py install <target> --check --out <runs>/install-<target>/1-install-<target>
+                                              the 2026-11-27 SS-600MP runs (published packages, one at a
+                                              time, ss600mp.bin in /usr/share/kvm): sunos412-ss600mp-prom,
+                                              sol21/sol22/sol23/sol24/sol25/sol251-ss600mp-prom
   lab.py install debian40-ss5 --check --gateway G --dns D --out <runs>/debian40-ss5/1-install-debian40-ss5
                                               (a route out: pve_matrix.py passes none)
   matrix.py machines, display                 sol26-disk-openbios-ss20, sol26-disk-openbios-cg3-1024x768
+
+One asset isn't made here: sunos412-cg3-single-user-ss600mp.webm, .vtt and -poster.png are the
+fb-bell.py run (GUEST=sunos4 MACHINE=SS-600MP VGA=cg3) on the stored sunos412-ss600mp disk in the lab's
+own QEMU, 2026-11-22 (e2e/sparc/README.md, "Older Sun releases: Solaris 2.1-2.5, SunOS
+4.1.2-4.1.3_U1B"), uploaded by hand.
 
 A matrix run that has only some of them (the `sparc lab` workflow's publish_media) replaces only those.
 """
@@ -144,6 +153,23 @@ CASTS = [
     ("install-sol9-ss20/1-install-sol9-ss20/check", "sol9-boot-ss20.cast", 1, 1),
     ("install-sol8-sun4u/1-install-sol8-sun4u/install", "sol8-install-sun4u.cast", 1, 3),
     ("install-sol8-sun4u/1-install-sol8-sun4u/check", "sol8-boot-sun4u.cast", 1, 2),
+    # lab.py install <target> --check, the SS-600MP under its own PROM (ss600mp.bin), 2026-11-27
+    ("install-sunos412-ss600mp-prom/1-install-sunos412-ss600mp-prom/install",
+     "sunos412-install-ss600mp-prom.cast", 1, 1),
+    ("install-sunos412-ss600mp-prom/1-install-sunos412-ss600mp-prom/check",
+     "sunos412-boot-ss600mp-prom.cast", 1, 1),
+    ("install-sol21-ss600mp-prom/1-install-sol21-ss600mp-prom/install", "sol21-install-ss600mp-prom.cast", 1, 2),
+    ("install-sol21-ss600mp-prom/1-install-sol21-ss600mp-prom/check", "sol21-boot-ss600mp-prom.cast", 1, 1),
+    ("install-sol22-ss600mp-prom/1-install-sol22-ss600mp-prom/install", "sol22-install-ss600mp-prom.cast", 1, 2),
+    ("install-sol22-ss600mp-prom/1-install-sol22-ss600mp-prom/check", "sol22-boot-ss600mp-prom.cast", 1, 1),
+    ("install-sol23-ss600mp-prom/1-install-sol23-ss600mp-prom/install", "sol23-install-ss600mp-prom.cast", 1, 2),
+    ("install-sol23-ss600mp-prom/1-install-sol23-ss600mp-prom/check", "sol23-boot-ss600mp-prom.cast", 1, 1),
+    ("install-sol24-ss600mp-prom/1-install-sol24-ss600mp-prom/install", "sol24-install-ss600mp-prom.cast", 1, 2),
+    ("install-sol24-ss600mp-prom/1-install-sol24-ss600mp-prom/check", "sol24-boot-ss600mp-prom.cast", 1, 1),
+    ("install-sol25-ss600mp-prom/1-install-sol25-ss600mp-prom/install", "sol25-install-ss600mp-prom.cast", 1, 2),
+    ("install-sol25-ss600mp-prom/1-install-sol25-ss600mp-prom/check", "sol25-boot-ss600mp-prom.cast", 1, 1),
+    ("install-sol251-ss600mp-prom/1-install-sol251-ss600mp-prom/install", "sol251-install-ss600mp-prom.cast", 1, 4),
+    ("install-sol251-ss600mp-prom/1-install-sol251-ss600mp-prom/check", "sol251-boot-ss600mp-prom.cast", 1, 1),
     # recordings
     ("sol26-ss20-smp4/1-solaris-boot-disk", "sol26-smp4-ss20.cast", 1, 1),
     ("sol22-install-ss10/1-solaris-install-serial", "sol22-install-ss10.cast", 1, 2),
