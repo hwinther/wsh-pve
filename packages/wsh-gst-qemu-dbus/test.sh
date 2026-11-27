@@ -27,7 +27,11 @@
 #        x86_64-egl as x86_64-gl, with qemudbussrc dmabuf-import=egl: every dmabuf read through
 #                   EGL (Mesa's software device), the way it reads a GPU's tiled dmabufs
 #        sparc32    SS-5, cg3, CS4231, Sun keyboard and mouse (relative): the shared map
-#   4. An unprivileged container's client: VM 101's bus with 'dbus-display-uids: 100000', set up by
+#   4. Reconnect (needs KERNELS/kernel-fb-x86_64): VM 102 stopped and started again with its bus,
+#      as qemu-server does: qemudbussrc and qemudbusaudiosrc with reconnect=true start before the
+#      VM, keep running while it is stopped and listen to its next run (new frames come);
+#      qemu-dbus-input prints "closed" and exits 3 when the VM stops.
+#   5. An unprivileged container's client: VM 101's bus with 'dbus-display-uids: 100000', set up by
 #      qemu-server's PVE::QemuServer::DBusDisplay (from the patch): qemu-dbus-input, qemudbussrc and
 #      qemudbusaudiosrc run as root of a user namespace whose root is the host's uid 100000 (unshare;
 #      needs docker run --security-opt seccomp=unconfined, else skipped) and get in; uid 200000,
@@ -181,6 +185,127 @@ for run in $RUNS; do
 		kill "$pid" 2> /dev/null || true
 	fi
 done
+
+step "Reconnect: the VM stopped and started again (reconnect=true)"
+# As qemu-server does it: the VM's bus starts before QEMU and stops with it, on the same socket
+# path each run. The clients start before the VM's first run and must follow it through a stop
+# and a start: qemudbussrc and qemudbusaudiosrc with reconnect=true keep running and listen to
+# the next run, qemu-dbus-input exits 3 ("closed") when the VM stops.
+RVMID=102
+RBUS=/run/wsh-dbus-display/$RVMID.sock
+ROUT=$OUT/reconnect
+# run as the streaming user; not a function, so that $! of a background job is the process itself
+AS_STREAMER="setpriv --reuid=$USER_NAME --regid=$USER_NAME --init-groups"
+rvm_start() { # the bus, then QEMU (wisp's x86_64 framebuffer kernel, std VGA, AC97)
+	setpriv --regid=wsh-display --clear-groups dbus-daemon --nofork --nopidfile \
+		--config-file=/usr/share/qemu-server/dbus-display.conf --address="unix:path=$RBUS" &
+	rbus_pid=$!
+	for _ in $(seq 50); do [ -S "$RBUS" ] && break; sleep 0.1; done
+	qemu-system-x86_64 -M pc -m 128 -vga std -device AC97,audiodev=snd0 -accel tcg -nodefaults \
+		-kernel "$KERNELS/kernel-fb-x86_64" -append "console=ttyS0 wisp=shell" \
+		-audiodev dbus,id=snd0,out.frequency=48000 -display "dbus,addr=unix:path=$RBUS,audiodev=snd0" \
+		-serial null -daemonize -pidfile "$RUN/reconnect.pid" >> "$ROUT/qemu.log" 2>&1
+}
+rvm_stop() { # QEMU, then its bus
+	pid=$(cat "$RUN/reconnect.pid" 2> /dev/null || true)
+	if [ -n "$pid" ]; then
+		kill "$pid" 2> /dev/null || true
+		for _ in $(seq 50); do kill -0 "$pid" 2> /dev/null || break; sleep 0.1; done
+	fi
+	kill "$rbus_pid" 2> /dev/null || true
+	wait "$rbus_pid" 2> /dev/null || true
+	rm -f "$RBUS" "$RUN/reconnect.pid"
+}
+count() { grep -c -e "$1" "$2" 2> /dev/null || true; }
+wait_count() { # PATTERN FILE N SECONDS: until FILE has N lines with PATTERN
+	for _ in $(seq $(($4 * 10))); do
+		[ "$(count "$1" "$2")" -ge "$3" ] && return 0
+		sleep 0.1
+	done
+	return 1
+}
+newest_after() { # DIR STAMP: a frame in DIR newer than STAMP
+	[ -n "$(find "$1" -name 'f*.rgb' -newer "$2" 2> /dev/null | head -n 1)" ]
+}
+if [ ! -r "$KERNELS/kernel-fb-x86_64" ]; then
+	skip "reconnect: no $KERNELS/kernel-fb-x86_64"
+else
+	mkdir -p "$ROUT/frames"
+	chown -R "$USER_NAME" "$ROUT"
+	rm -f "$RBUS"
+	$AS_STREAMER env GST_DEBUG=qemudbussrc:4 GST_DEBUG_NO_COLOR=1 gst-launch-1.0 -e qemudbussrc \
+		address="unix:path=$RBUS" reconnect=true ! videoconvert ! video/x-raw,format=RGB ! \
+		multifilesink location="$ROUT/frames/f%06d.rgb" max-files=5 > "$ROUT/video.log" 2>&1 &
+	rvideo=$!
+	$AS_STREAMER env GST_DEBUG=qemudbusaudiosrc:4 GST_DEBUG_NO_COLOR=1 gst-launch-1.0 -e \
+		qemudbusaudiosrc address="unix:path=$RBUS" reconnect=true ! fakesink > "$ROUT/audio.log" 2>&1 &
+	raudio=$!
+	if wait_count "waiting for the VM" "$ROUT/video.log" 1 15 && wait_count "waiting for the VM" "$ROUT/audio.log" 1 15 &&
+		kill -0 "$rvideo" 2> /dev/null && kill -0 "$raudio" 2> /dev/null; then
+		pass "reconnect: qemudbussrc and qemudbusaudiosrc start before the VM runs and wait for it"
+	else
+		fail "reconnect: the elements didn't wait for the VM (see reconnect/video.log, audio.log)"
+	fi
+	rvm_start || fail "reconnect: QEMU didn't start (see reconnect/qemu.log)"
+	if wait_count "listening on .* again" "$ROUT/video.log" 1 30 && wait_count "listening on .* again" "$ROUT/audio.log" 1 30 &&
+		sleep 3 && [ -n "$(ls "$ROUT/frames")" ]; then
+		pass "reconnect: both listen to the VM's first run, frames come"
+	else
+		fail "reconnect: no listener on the first run, or no frame (see reconnect/video.log, audio.log)"
+	fi
+	mkfifo "$ROUT/input.fifo"
+	chown "$USER_NAME" "$ROUT/input.fifo"
+	(
+		rc=0
+		$AS_STREAMER qemu-dbus-input --address "unix:path=$RBUS" < "$ROUT/input.fifo" > "$ROUT/input.log" 2>&1 || rc=$?
+		echo "$rc" > "$ROUT/input.rc"
+	) &
+	exec 9> "$ROUT/input.fifo"
+	wait_count "^ready" "$ROUT/input.log" 1 15 || fail "reconnect: qemu-dbus-input didn't connect (see reconnect/input.log)"
+	rvm_stop
+	for _ in $(seq 100); do [ -s "$ROUT/input.rc" ] && break; sleep 0.1; done
+	if [ "$(cat "$ROUT/input.rc" 2> /dev/null)" = 3 ] && grep -q '^closed$' "$ROUT/input.log"; then
+		pass "reconnect: qemu-dbus-input printed 'closed' and exited 3 when the VM stopped"
+	else
+		fail "reconnect: qemu-dbus-input exit '$(cat "$ROUT/input.rc" 2> /dev/null)' after the VM stopped (see reconnect/input.log)"
+	fi
+	exec 9>&-
+	sleep 3
+	if kill -0 "$rvideo" 2> /dev/null && kill -0 "$raudio" 2> /dev/null &&
+		wait_count "waiting for the VM to run again" "$ROUT/video.log" 1 1 &&
+		wait_count "waiting for the VM to run again" "$ROUT/audio.log" 1 1; then
+		pass "reconnect: both elements kept running (no EOS) while the VM was stopped"
+	else
+		fail "reconnect: an element ended when the VM stopped (see reconnect/video.log, audio.log)"
+	fi
+	touch "$ROUT/restart.stamp"
+	sleep 1
+	rvm_start || fail "reconnect: QEMU didn't start (see reconnect/qemu.log)"
+	if wait_count "listening on .* again" "$ROUT/video.log" 2 30 && wait_count "listening on .* again" "$ROUT/audio.log" 2 30; then
+		ok=
+		for _ in $(seq 150); do newest_after "$ROUT/frames" "$ROUT/restart.stamp" && ok=1 && break; sleep 0.1; done
+		if [ -n "$ok" ]; then
+			pass "reconnect: both listen to the VM's next run, and its frames come"
+		else
+			fail "reconnect: listening to the next run, but no new frame (see reconnect/video.log)"
+		fi
+	else
+		fail "reconnect: no listener on the VM's next run (see reconnect/video.log, audio.log)"
+	fi
+	for p in $rvideo $raudio; do kill -INT "$p" 2> /dev/null || true; done
+	rc_v=0
+	rc_a=0
+	wait "$rvideo" || rc_v=$?
+	wait "$raudio" || rc_a=$?
+	stats=$(grep -o 'stopped: .*' "$ROUT/video.log" | tail -n 1)
+	if [ "$rc_v" = 0 ] && [ "$rc_a" = 0 ] && echo "$stats" | grep -q 'reconnects=2'; then
+		pass "reconnect: both pipelines ended cleanly ($stats)"
+	else
+		fail "reconnect: pipelines exited $rc_v/$rc_a ($stats)"
+	fi
+	rvm_stop
+	rm -rf "$ROUT/frames" "$ROUT/input.fifo"
+fi
 
 step "An unprivileged container (dbus-display-uids)"
 # A client whose uid inside its user namespace (0) is the host's 100000, as in an unprivileged

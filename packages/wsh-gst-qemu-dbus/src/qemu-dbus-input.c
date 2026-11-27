@@ -18,6 +18,7 @@
  * console) and sends it as SetAbsPosition; with a relative one, abs sends the difference from the
  * previous abs position as RelMotion (the first abs only sets that position). Changes of the mode
  * are printed ("mode absolute|relative"). Keys still down when standard input ends are released.
+ * When QEMU leaves the bus (the VM stopped) the bridge prints "closed" and exits with status 3.
  *
  * Copyright 2026 WsHosting ENK. License: GPL-3 (see debian/copyright).
  */
@@ -46,6 +47,7 @@ typedef struct
   guint64 sent, answered;
   GQueue syncs;                 /* the sent counts "sync" waits for, as guint64 in pointers */
   gboolean eof;
+  gboolean closed;              /* the bus went away (the VM stopped) */
 
   gboolean absolute;
   gint px, py;                  /* the pointer, for rel on an absolute pointer */
@@ -427,6 +429,21 @@ read_next (Bridge * b)
   g_data_input_stream_read_line_async (b->in, G_PRIORITY_DEFAULT, NULL, line_read, b);
 }
 
+/* QEMU left the bus, or the bus went away (qemu-server stops a VM's bus with it): nothing more
+ * reaches the VM, so say so and exit (3); a caller that wants the VM's next run starts the bridge
+ * again */
+static void
+qemu_vanished (GDBusConnection * conn, const gchar * name, gpointer user_data)
+{
+  Bridge *b = user_data;
+
+  if (b->closed)
+    return;
+  b->closed = TRUE;
+  out ("closed");
+  g_main_loop_quit (b->loop);
+}
+
 static void
 mouse_changed (GDBusProxy * proxy, GVariant * changed, GStrv invalidated, gpointer user_data)
 {
@@ -525,8 +542,12 @@ main (int argc, char **argv)
   b.in = g_data_input_stream_new (stdin_stream);
   g_object_unref (stdin_stream);
   b.loop = g_main_loop_new (NULL, FALSE);
+  g_bus_watch_name_on_connection (b.bus, QEMUDBUS_NAME, G_BUS_NAME_WATCHER_FLAGS_NONE, NULL,
+      qemu_vanished, &b, NULL);
   read_next (&b);
   g_main_loop_run (b.loop);
+  if (b.closed)
+    return 3;
 
   g_object_unref (b.in);
   g_object_unref (b.mouse);
