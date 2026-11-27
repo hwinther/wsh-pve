@@ -841,6 +841,51 @@ const scenarios: LivingMuseumScenario[] = [
     },
   },
   {
+    id: "reactos0416-pc",
+    machine: "pc",
+    machineLabel: "x86 (i440fx)",
+    os: "reactos0416",
+    osLabel: "ReactOS 0.4.16",
+    osFamily: "ReactOS",
+    blurb:
+      "An x86 VM (i440fx, SeaBIOS, qemu64, std VGA, 1024 MB, IDE, rtl8139, TCG): ReactOS's own " +
+      "unattended setup from the release CD with the lab's answer file, the text-mode stage, the " +
+      "graphical second stage and the first logon, then the check boot to the desktop without the " +
+      "kernel debugger. The VM has tdf: 0, since the RTC drift fix PVE adds for Windows OS types " +
+      "hangs ReactOS's setup under TCG. A frame a second at most, time-lapse; the captions are the " +
+      "lab's steps.",
+    stages: [
+      {
+        label: "Install",
+        media: {
+          kind: "video",
+          src: "/recordings/reactos0416-install.webm",
+          captions: "/recordings/reactos0416-install.vtt",
+          poster: "/recordings/reactos0416-install-poster.png",
+          width: 1024,
+          height: 768,
+          caption: "ReactOS 0.4.16 unattended install from the release CD under PVE (time-lapse)",
+        },
+      },
+      {
+        label: "First boot",
+        media: {
+          kind: "video",
+          src: "/recordings/reactos0416-boot.webm",
+          captions: "/recordings/reactos0416-boot.vtt",
+          poster: "/recordings/reactos0416-boot-poster.png",
+          width: 1024,
+          height: 768,
+          caption: "ReactOS 0.4.16 booting the installed disk to its desktop under PVE (time-lapse)",
+        },
+      },
+    ],
+    tryIt: {
+      command: "wsh-lab install reactos0416 --check",
+      note: "about 16 minutes under TCG; needs the answer CD from `wsh-lab media reactos0416 --convert` (lab-install.md; reactos.md)",
+    },
+  },
+  {
     id: "sol23-ss5",
     machine: "ss5",
     machineLabel: "SPARCstation 5 (SS-5)",

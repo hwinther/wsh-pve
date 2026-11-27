@@ -1003,9 +1003,7 @@ merged; what is left of them is item 2 under "Next".
   `vmware` come up at 800x600. Open: whether `-rtc driftfix=slew` (qemu-server's time drift fix for
   Windows OS types, which hung the setup under TCG; the target sets `tdf: 0`) also hangs it under
   KVM, and why. No CI job: the CD isn't in the Actions cache (fetch_media.py could pin the release
-  zip as it does FreeDOS's). The living museum has no ReactOS entry yet: publish_media.py names the
-  install's and the check's videos (`reactos0416-install`, `reactos0416-boot`), so the entry can
-  follow once they are in the `media` release.
+  zip as it does FreeDOS's).
 
 - **Hookscripts in the web UI** (from the old TODO.md). Add, change and remove a VM's `hookscript`
   (a snippet volume) in the VM's Options, instead of only through `qm set --hookscript`. Not started.
