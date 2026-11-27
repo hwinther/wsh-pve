@@ -125,6 +125,133 @@ before the terminal. SS-600MP, OpenBIOS, one CPU, 64 MB for the install, 256 MB 
   poster="npt:0:10"
 />
 
+On a cg3 instead of the serial console (the installed disk in the lab's own QEMU, `fb-bell.py`,
+2026-11-22): OpenBIOS's banner, `boot disk:a -s`, the kernel's messages and the single-user shell,
+then the bell test (BEL inverts the screen and the shell still answers). 4.1.2 attaches no frame
+buffer driver (`No default frame buffer found`): what is on the screen is OpenBIOS's terminal drawing
+the text the kernel hands it. Multi-user on the framebuffer wasn't tried, so the install targets use
+the serial console.
+
+<LabVideo
+  src="/recordings/sunos412-cg3-single-user-ss600mp.webm"
+  captions="/recordings/sunos412-cg3-single-user-ss600mp.vtt"
+  poster="/recordings/sunos412-cg3-single-user-ss600mp-poster.png"
+  width={1024}
+  height={768}
+  caption="SunOS 4.1.2 to single user on a cg3 (1024x768), SPARCserver 600MP with OpenBIOS in the lab's QEMU, then the bell test"
+/>
+
+### SunOS 4.1.2 and Solaris 2.1 to 2.5.1 on SPARCserver 600MP with the Sun PROM
+
+The same machine under Sun's own 600MP boot PROM (`bios: ss600mp.bin`, ROM Rev. 2.14; no package
+has the image, see [The SPARCserver 600MP](/guides/sparc/#the-sparcserver-600mp)). QEMU gives the
+PROM a configuration with `auto-boot?` false, so each start stops at `ok` on the serial console: the
+install types `boot cdrom`, and the first boot and the check `boot disk`. SunOS 4.1.2 installs as
+under OpenBIOS (the PROM boots the miniroot from its reboot string by itself). Solaris 2.1 to 2.5.1
+each run the install of their SS-10 (2.1, 2.2) or SS-5 target unchanged: the CD as a disk, the same
+screens and answers, End User. They need pve-qemu patch wsh/0190 (the MXCC stream registers' RDY
+bit, which the kernels poll because this PROM offers `bcopy?`; without it each hung right after the
+kernel's `clock gained ... days` warning). After 2.1's, 2.2's and 2.3's `init 5` the PROM reboots
+with `-a` and stops at the boot program's `Enter filename`, which ends their boot recordings.
+Solaris 2.6 and later refuse the machine by name. One CPU, 256 MB. Most of 2.5.1's install is its
+Maintenance Update, so it plays at 4x, the other Solaris installs at 2x. Recorded 2026-11-27 with
+the published pve-qemu-kvm 11.1.3-4+wsh37, qemu-server 9.2.24+wsh5 and pve-manager 9.3.1+wsh1, one
+install at a time:
+
+| Target | Install | First boot | Check | Total |
+| --- | --- | --- | --- | --- |
+| `sunos412-ss600mp-prom` | 2.6 min | 2.7 min | 0.9 min | 6.5 min |
+| `sol21-ss600mp-prom` | 5.7 min | 4.5 min | 1.5 min | 12.0 min |
+| `sol22-ss600mp-prom` | 4.6 min | 2.5 min | 1.4 min | 8.7 min |
+| `sol23-ss600mp-prom` | 4.8 min | 2.5 min | 1.4 min | 9.0 min |
+| `sol24-ss600mp-prom` | 4.0 min | 2.2 min | 1.2 min | 7.6 min |
+| `sol25-ss600mp-prom` | 4.5 min | 2.7 min | 1.3 min | 8.8 min |
+| `sol251-ss600mp-prom` | 33.2 min | 2.9 min | 1.5 min | 37.8 min |
+
+<LabCast
+  src="/recordings/sunos412-install-ss600mp-prom.cast"
+  caption="SunOS 4.1.2 install from CD, SPARCserver 600MP with the Sun PROM under PVE, serial console"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sunos412-boot-ss600mp-prom.cast"
+  caption="SunOS 4.1.2 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol21-install-ss600mp-prom.cast"
+  caption="Solaris 2.1 install, SPARCserver 600MP with the Sun PROM under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol21-boot-ss600mp-prom.cast"
+  caption="Solaris 2.1 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol22-install-ss600mp-prom.cast"
+  caption="Solaris 2.2 install, SPARCserver 600MP with the Sun PROM under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol22-boot-ss600mp-prom.cast"
+  caption="Solaris 2.2 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol23-install-ss600mp-prom.cast"
+  caption="Solaris 2.3 Edition II install, SPARCserver 600MP with the Sun PROM under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol23-boot-ss600mp-prom.cast"
+  caption="Solaris 2.3 Edition II booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol24-install-ss600mp-prom.cast"
+  caption="Solaris 2.4 HW 3/95 install, SPARCserver 600MP with the Sun PROM under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol24-boot-ss600mp-prom.cast"
+  caption="Solaris 2.4 HW 3/95 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol25-install-ss600mp-prom.cast"
+  caption="Solaris 2.5 HW 1/96 install, SPARCserver 600MP with the Sun PROM under PVE (2x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol25-boot-ss600mp-prom.cast"
+  caption="Solaris 2.5 HW 1/96 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol251-install-ss600mp-prom.cast"
+  caption="Solaris 2.5.1 11/97 install, SPARCserver 600MP with the Sun PROM under PVE (4x)"
+  poster="npt:0:10"
+/>
+
+<LabCast
+  src="/recordings/sol251-boot-ss600mp-prom.cast"
+  caption="Solaris 2.5.1 11/97 booting the installed disk, SPARCserver 600MP with the Sun PROM under PVE"
+  poster="npt:0:10"
+/>
+
 ### SunOS 4.1.3 on SS-10
 
 SunOS 4.1.3 (Solaris 1.1, kernel built July 1992), the first SunOS 4 for the SS-10, from its own

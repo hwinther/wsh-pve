@@ -1317,7 +1317,9 @@ VGA=cg3`, console on the framebuffer and the Sun keyboard): `boot disk:a -s` boo
 single-user shell, which answers, and BEL comes back (passed, 96 s). The kernel prints `No default
 frame buffer found` and attaches no `cgthree`, so the text on the screen is the PROM's terminal
 (OpenBIOS) drawing what the kernel hands the romvec, not a SunOS frame buffer driver; the first
-keys typed after the shell came up were lost once. So the gallery has the serial console only.
+keys typed after the shell came up were lost once. So the install targets use the serial console;
+that run's framebuffer video is in the gallery as `sunos412-cg3-single-user-ss600mp` (uploaded by
+hand, see `publish_media.py`).
 
 Not tried: `--user`, `--gateway`, the 9G disk, a boot test of the stored disk, multi-user on the
 framebuffer console, TCX.
