@@ -2786,6 +2786,52 @@ What it would take for the rest:
        that starts both at reset stopped after `screen not found.`, CPU 1 in a branch to itself in the
        PROM (its stop loop, presumably): the PROM's multiprocessor start (mailboxes, module IDs) would
        need modelling first. Not pursued; the profile keeps one CPU.
+     - *SMP feasibility check (2026-11-27, lab build of the series to 0191 with lab-only switches
+       and logging, nothing committed):* not a small fix. What the PROM does with more than one module,
+       from traces of both CPUs (HMP `info registers -a` samples, `-d int`, the `slavio_*` and
+       `ecc_diag_*` trace events, and temporary logging of the MBus port register and of interrupt
+       controller writes per vCPU):
+       - *Module IDs are right.* Each CPU reads its MID from the MXCC MBus port register (ASI 2
+         `0x01c0_0f00`, bits 27-24): 8 and 9 with `-smp 2`, as `cpu_sparc_set_id` sets them. (Side
+         note: `cpu_devinit` calls `cpu_sparc_set_id` after realize and so drops the MXCC version
+         that realize ORs into that register; the PROM only uses the MID bits.)
+       - *Stock QEMU (CPU 1 powered off):* `cpu_set_irq` wakes a powered-off CPU on any interrupt, so
+         CPU 1 starts the PROM from its reset vector in the middle of CPU 0's POST, when the POST's
+         tests raise level 15 on every CPU (CPU 1's MID reads appear there). It finds nothing to do,
+         and the banner says `1 X 390Z55`.
+       - *Both CPUs started at reset* (lab switch, `start-powered-off` false for all): the PROM uses
+         the four ECC diagnostic bytes at `0xf.0000_1000` (QEMU's `ecc.diag`, plain storage) as one
+         progress byte per module (index MID & 3): the master writes `0xff` to all four at reset,
+         later its own progress codes in byte 0, and `0xff` to bytes 1-3 again; a slave writes 0 to
+         its byte and spins until it reads non-zero, then runs its own POST. A second mailbox is a
+         word in RAM (the PROM's data page at virtual `0xffef_2004`): a slave spins until its low
+         nibble is its MID; a lock word next to it (`swap`, owner MID beside it) serializes the
+         modules. Whether a slave sees its release depends on vCPU scheduling:
+         - *single-threaded TCG* (`-accel tcg,thread=single`): CPU 1 writes its 0 after the master's
+           second `0xff`, so it spins on its byte for good, and CPU 0 sits in the Forth interpreter;
+           nothing on ttya after 40 s (one CPU: the banner after about 10 s).
+         - *MTTCG* (default): CPU 1 writes its 0 first, is released by the master's second `0xff` and
+           runs its module POST (progress `0x99`, `0x95`, `0x90`) at the same time as CPU 0 runs the
+           board tests. CPU 1's tests write the system interrupt controller (target CPU 1, mask
+           all), and one write of the system mask set register carried a PROM address with bit 31
+           set (a race on data the two modules share). CPU 0 then saves and restores that mask
+           around its CPU speed calibration, so `MASTER_DISABLE` stays set and blocks the level 14
+           per-CPU counter interrupt: both CPUs end in the calibration loop (`b .` counting until
+           level 14), nothing on ttya. The order of events differs between runs.
+       - *What SMP under this PROM would need:* (1) start all modules at reset on the SS-600MP; (2)
+         an MP start-up that doesn't depend on TCG's vCPU timing (the release above is a race in
+         QEMU; on hardware all modules leave reset together at the same clock); (3) every slave module test to
+         pass for MIDs 9-11 (per-CPU counter, per-CPU interrupt registers, MBus addresses), without
+         disturbing the master's board tests; (4) the PROM's MP module tests (its strings name cache
+         snoop tests between `cpu0` and `cpuN`, and DVMA snoop), which check cache coherency through
+         the diagnostic ASIs, so they need a cache model with snooping behind them (large, as for
+         the cache behaviour tests under "Scope" below); and only then (5) the PROM's CPU probe
+         (`Cpu #1`), its `idle-cpu-loop` for slaves, and the romvec CPU start that Solaris 2.x uses.
+         Each of steps 2-4 needs a trace loop of its own, as items 5-11 did for CPU 0's POST.
+         Estimate: several days to weeks, with no guarantee at step 4. Not pursued; the profile
+         keeps one CPU. Not checked: whether the MP module tests run without `diag-switch?`, and
+         Solaris with 2 CPUs under OpenBIOS on the SS-600MP (no stored Solaris disk for it; OpenBIOS
+         starts CPUs the way QEMU does, so that is the cheaper way to SMP on this machine).
      - *Tests:* `wsh/0191`, `sun4m-viking-diag-test` cases `stream/ss600mp`, `stream/ss10` and
        `stream/ss20`; the SS-600MP case fails on a build without 0190 (`0x0 == 0x8000000000003000`).
      Regression (the series to 0191 applied with `patch -p1 -s -t -F0`, 218 patches without fuzz, the

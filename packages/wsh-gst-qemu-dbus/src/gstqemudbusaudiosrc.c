@@ -29,6 +29,10 @@
  * that again, and the gap is the downstream's to fill. Sound that runs ahead (QEMU catching up
  * with a burst of Writes) keeps its continuous time; a Write more than 200 ms ahead is dropped.
  *
+ * When QEMU closes the connection (the VM stopped) the element sends EOS. With reconnect=true it
+ * goes on with silence (in the last stream's format) and tries every RECONNECT_INTERVAL_MS to
+ * listen to the VM's next run on its bus; it also starts while the VM isn't running.
+ *
  * Copyright 2026 WsHosting ENK. License: GPL-3 (see debian/copyright).
  */
 #ifdef HAVE_CONFIG_H
@@ -85,6 +89,7 @@ enum
   PROP_TIMEOUT,
   PROP_APPLY_VOLUME,
   PROP_SILENCE,
+  PROP_RECONNECT,
   PROP_STATS,
 };
 
@@ -92,6 +97,11 @@ enum
 #define DEFAULT_TIMEOUT 10
 #define DEFAULT_APPLY_VOLUME TRUE
 #define DEFAULT_SILENCE TRUE
+#define DEFAULT_RECONNECT FALSE
+
+/* reconnect=true: as in qemudbussrc */
+#define RECONNECT_INTERVAL_MS 500
+#define RECONNECT_TIMEOUT_MS 2000
 
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC, GST_PAD_ALWAYS,
@@ -124,6 +134,7 @@ struct _GstQemuDBusAudioSrc
   guint timeout;
   gboolean apply_volume;
   gboolean silence;
+  gboolean reconnect;
 
   QemuDBusPeer *peer;
   GDBusNodeInfo *node;
@@ -132,6 +143,9 @@ struct _GstQemuDBusAudioSrc
   GCond cond;
   gboolean flushing;
   gboolean eos;
+  gboolean lost;                /* reconnect=true: QEMU went away (or wasn't there yet) */
+  gint64 retry_at;              /* and when to try again (monotonic time) */
+  guint64 n_tries;
   GHashTable *streams;          /* id -> Stream */
   guint64 active;
   gboolean have_active;
@@ -147,6 +161,7 @@ struct _GstQemuDBusAudioSrc
   GstClockTime next_ts;
 
   guint64 n_writes, n_bytes, n_dropped, n_other, n_buffers, n_silence, n_resync, n_ahead;
+  guint64 n_reconnects;
 };
 
 #define gst_qemu_dbus_audio_src_parent_class parent_class
@@ -421,11 +436,76 @@ on_closed (gpointer user_data)
 {
   GstQemuDBusAudioSrc *src = GST_QEMU_DBUS_AUDIO_SRC (user_data);
 
-  GST_INFO_OBJECT (src, "QEMU closed the connection: end of stream");
   g_mutex_lock (&src->lock);
-  src->eos = TRUE;
+  if (src->reconnect) {
+    /* the run's streams are gone; what came is played, then silence in the last format */
+    GST_INFO_OBJECT (src, "QEMU closed the connection: waiting for the VM to run again");
+    g_hash_table_remove_all (src->streams);
+    src->have_active = FALSE;
+    src->n_enabled = 0;
+    src->lost = TRUE;
+    src->retry_at = g_get_monotonic_time ();
+  } else {
+    GST_INFO_OBJECT (src, "QEMU closed the connection: end of stream");
+    src->eos = TRUE;
+  }
   g_cond_broadcast (&src->cond);
   g_mutex_unlock (&src->lock);
+}
+
+/* Registers the listener on the VM's bus at address */
+static QemuDBusPeer *
+listen_start (GstQemuDBusAudioSrc * src, const gchar * address, guint timeout_ms,
+    GError ** error)
+{
+  GDBusInterfaceInfo *interfaces[2];
+  QemuDBusPeerConfig config = { 0 };
+
+  interfaces[0] = src->node->interfaces[0];
+  interfaces[1] = NULL;
+  config.address = address;
+  config.object_path = "/org/qemu/Display1/Audio";
+  config.interface = "org.qemu.Display1.Audio";
+  config.method = "RegisterOutListener";
+  config.listener_path = "/org/qemu/Display1/AudioOutListener";
+  config.listener_interfaces = interfaces;
+  config.vtable = &listener_vtable;
+  config.user_data = src;
+  config.closed = on_closed;
+  config.timeout_ms = timeout_ms;
+  return qemudbus_peer_start (&config, error);
+}
+
+/*
+ * reconnect=true, QEMU gone: drops the old connection and tries once to listen on the VM's bus
+ * again; if that fails, the next try is RECONNECT_INTERVAL_MS later. On the streaming thread,
+ * called and returning with the lock held (silence goes on between the tries).
+ */
+static void
+try_reconnect (GstQemuDBusAudioSrc * src)
+{
+  QemuDBusPeer *old = src->peer, *peer;
+  gchar *address = qemudbus_resolve_address (src->address, src->vmid);
+  GError *error = NULL;
+
+  src->peer = NULL;
+  g_mutex_unlock (&src->lock);
+  qemudbus_peer_stop (old);
+  peer = listen_start (src, address, RECONNECT_TIMEOUT_MS, &error);
+  g_mutex_lock (&src->lock);
+  if (peer) {
+    src->peer = peer;
+    src->lost = FALSE;
+    src->n_reconnects++;
+    GST_INFO_OBJECT (src, "listening on %s again", address);
+  } else {
+    /* the first failure, then one line a minute */
+    if (src->n_tries++ % (60000 / RECONNECT_INTERVAL_MS) == 0)
+      GST_INFO_OBJECT (src, "waiting for the VM on %s: %s", address, error->message);
+    g_error_free (error);
+    src->retry_at = g_get_monotonic_time () + RECONNECT_INTERVAL_MS * G_TIME_SPAN_MILLISECOND;
+  }
+  g_free (address);
 }
 
 static void
@@ -449,8 +529,6 @@ gst_qemu_dbus_audio_src_start (GstBaseSrc * bsrc)
   GstQemuDBusAudioSrc *src = GST_QEMU_DBUS_AUDIO_SRC (bsrc);
   GError *error = NULL;
   gchar *address;
-  GDBusInterfaceInfo *interfaces[2];
-  QemuDBusPeerConfig config = { 0 };
 
   address = qemudbus_resolve_address (src->address, src->vmid);
   if (!address) {
@@ -461,26 +539,28 @@ gst_qemu_dbus_audio_src_start (GstBaseSrc * bsrc)
   g_mutex_lock (&src->lock);
   reset (src);
   src->eos = FALSE;
+  src->lost = FALSE;
   src->flushing = FALSE;
   src->n_writes = src->n_bytes = src->n_dropped = src->n_other = src->n_buffers = 0;
-  src->n_silence = src->n_resync = src->n_ahead = 0;
+  src->n_silence = src->n_resync = src->n_ahead = src->n_reconnects = src->n_tries = 0;
   g_mutex_unlock (&src->lock);
   src->have_caps = FALSE;
   src->next_ts = GST_CLOCK_TIME_NONE;
 
-  interfaces[0] = src->node->interfaces[0];
-  interfaces[1] = NULL;
-  config.address = address;
-  config.object_path = "/org/qemu/Display1/Audio";
-  config.interface = "org.qemu.Display1.Audio";
-  config.method = "RegisterOutListener";
-  config.listener_path = "/org/qemu/Display1/AudioOutListener";
-  config.listener_interfaces = interfaces;
-  config.vtable = &listener_vtable;
-  config.user_data = src;
-  config.closed = on_closed;
-  config.timeout_ms = src->timeout * 1000;
-  src->peer = qemudbus_peer_start (&config, &error);
+  src->peer = listen_start (src, address,
+      src->reconnect ? RECONNECT_TIMEOUT_MS : src->timeout * 1000, &error);
+  if (!src->peer && src->reconnect) {
+    /* the VM isn't running (yet): create() keeps trying */
+    GST_INFO_OBJECT (src, "waiting for the VM on %s: %s", address, error->message);
+    g_error_free (error);
+    g_mutex_lock (&src->lock);
+    src->lost = TRUE;
+    src->n_tries = 1;
+    src->retry_at = g_get_monotonic_time () + RECONNECT_INTERVAL_MS * G_TIME_SPAN_MILLISECOND;
+    g_mutex_unlock (&src->lock);
+    g_free (address);
+    return TRUE;
+  }
   if (!src->peer) {
     GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, ("Can't listen to QEMU's D-Bus audio"),
         ("%s: %s (is the VM's audio driver dbus, -audiodev dbus with -display dbus,audiodev=?)",
@@ -500,8 +580,9 @@ stats_string (GstQemuDBusAudioSrc * src)
   return g_strdup_printf ("writes=%" G_GUINT64_FORMAT " bytes=%" G_GUINT64_FORMAT
       " buffers=%" G_GUINT64_FORMAT " silent-buffers=%" G_GUINT64_FORMAT " dropped=%"
       G_GUINT64_FORMAT " ahead-dropped=%" G_GUINT64_FORMAT " resyncs=%" G_GUINT64_FORMAT
-      " other-streams=%" G_GUINT64_FORMAT, src->n_writes, src->n_bytes, src->n_buffers,
-      src->n_silence, src->n_dropped, src->n_ahead, src->n_resync, src->n_other);
+      " other-streams=%" G_GUINT64_FORMAT " reconnects=%" G_GUINT64_FORMAT, src->n_writes,
+      src->n_bytes, src->n_buffers, src->n_silence, src->n_dropped, src->n_ahead, src->n_resync,
+      src->n_other, src->n_reconnects);
 }
 
 static gboolean
@@ -611,11 +692,18 @@ next_chunk (GstQemuDBusAudioSrc * src, GstFlowReturn * ret)
       *ret = GST_FLOW_EOS;
       return NULL;
     }
+    if (src->lost && g_get_monotonic_time () >= src->retry_at) {
+      try_reconnect (src);
+      continue;
+    }
     now = GST_CLOCK_TIME_NONE;
     if (src->silence && src->have_last_info)
       now = running_time_now (src);
     if (!GST_CLOCK_TIME_IS_VALID (now)) {
-      g_cond_wait (&src->cond, &src->lock);
+      if (src->lost)
+        g_cond_wait_until (&src->cond, &src->lock, src->retry_at);
+      else
+        g_cond_wait (&src->cond, &src->lock);
       continue;
     }
     /* silence, in the negotiated format (the newest stream's before the first buffer) */
@@ -741,6 +829,9 @@ gst_qemu_dbus_audio_src_set_property (GObject * object, guint prop_id, const GVa
     case PROP_SILENCE:
       src->silence = g_value_get_boolean (value);
       break;
+    case PROP_RECONNECT:
+      src->reconnect = g_value_get_boolean (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -768,6 +859,9 @@ gst_qemu_dbus_audio_src_get_property (GObject * object, guint prop_id, GValue * 
       break;
     case PROP_SILENCE:
       g_value_set_boolean (value, src->silence);
+      break;
+    case PROP_RECONNECT:
+      g_value_set_boolean (value, src->reconnect);
       break;
     case PROP_STATS:
       g_mutex_lock (&src->lock);
@@ -830,6 +924,11 @@ gst_qemu_dbus_audio_src_class_init (GstQemuDBusAudioSrcClass * klass)
           "Output silence in real time while the guest plays nothing, so the stream has no gaps "
           "(an encoder or audiorate downstream gets a continuous stream)", DEFAULT_SILENCE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY));
+  g_object_class_install_property (gobject_class, PROP_RECONNECT,
+      g_param_spec_boolean ("reconnect", "Reconnect",
+          "When the VM stops, go on (with silence) and listen to its next run instead of ending "
+          "the stream (EOS); also start before the VM runs", DEFAULT_RECONNECT,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_MUTABLE_READY));
   g_object_class_install_property (gobject_class, PROP_STATS,
       g_param_spec_string ("stats", "Statistics", "What QEMU sent and how many buffers went out",
           NULL, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
@@ -858,7 +957,8 @@ gst_qemu_dbus_audio_src_init (GstQemuDBusAudioSrc * src)
   src->timeout = DEFAULT_TIMEOUT;
   src->apply_volume = DEFAULT_APPLY_VOLUME;
   src->silence = DEFAULT_SILENCE;
-  src->node = g_dbus_node_info_new_for_xml (AUDIO_LISTENER_XML, NULL);
+  src->reconnect = DEFAULT_RECONNECT;
+  src->node =g_dbus_node_info_new_for_xml (AUDIO_LISTENER_XML, NULL);
   g_assert (src->node);
   src->streams = g_hash_table_new_full (g_int64_hash, g_int64_equal, g_free, g_free);
   g_queue_init (&src->chunks);

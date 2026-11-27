@@ -81,6 +81,11 @@ How long to wait for QEMU on the bus (default 10).
 .BR \-q ", " \-\-quiet
 Print only errors and the answers to \fBquery\fR and \fBsync\fR; without it the bridge prints
 \fBready\fR, the console's path, its mouse mode and size once connected, and mode changes.
+.SH EXIT STATUS
+0 when standard input ended and QEMU answered every command; 1 when it couldn't connect (no
+such bus, QEMU not on it within the timeout, no console or mouse); 2 for a usage error; 3 when
+QEMU left the bus or the bus went away while it ran (the VM stopped: \fBclosed\fR is printed
+first). A caller that should follow the VM through a restart starts it again after 3.
 .SH EXAMPLE
 .nf
 printf 'key 30 1\\nkey 30 0\\nabs 640 400\\nbtn left 1\\nbtn left 0\\nsync\\n' |
