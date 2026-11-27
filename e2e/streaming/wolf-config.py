@@ -96,6 +96,15 @@ def have_elements(names):
                               stderr=subprocess.DEVNULL).returncode == 0 for n in names)
 
 
+def has_reconnect():
+    """whether the installed qemudbussrc has reconnect (wsh-gst-qemu-dbus 0.4 and later): an
+    unknown property would stop the pipeline from being made"""
+    if not shutil.which("gst-inspect-1.0"):
+        return True
+    r = subprocess.run(["gst-inspect-1.0", "qemudbussrc"], capture_output=True, text=True)
+    return r.returncode != 0 or "reconnect" in r.stdout
+
+
 def toml_str(s):
     return '"' + s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
@@ -174,8 +183,10 @@ def main():
     elif scaler == "cuda" and not have_elements(CUDA_ELEMENTS):
         print(f"SCALER=cuda: GStreamer has no {', '.join(CUDA_ELEMENTS)} here (libnvrtc, the"
               " GPU's devices?): the apps won't stream until it has", file=sys.stderr)
-    print(f"wolf-config.py: H264_ENCODER={encoder} SCALER={scaler} ASPECT={aspect}",
-          file=sys.stderr)
+    reconnect = " reconnect=true" if has_reconnect() else ""
+    print(f"wolf-config.py: H264_ENCODER={encoder} SCALER={scaler} ASPECT={aspect}"
+          + ("" if reconnect else " (this wsh-gst-qemu-dbus has no reconnect: the apps end their"
+             " stream when the VM stops)"), file=sys.stderr)
     if scaler == "cuda":
         repeat = REPEAT_CUDA.format(
             sizing=" sink_0::sizing-policy=keep-aspect-ratio" if aspect == "keep" else "")
@@ -201,12 +212,12 @@ def main():
             f"run_cmd = {toml_str('wolf-input-bridge --address ' + address + log)}",
             "",
             "[profiles.apps.video]",
-            f"source = {toml_str(f'qemudbussrc address={address} reconnect=true{src_props} ! {repeat}')}",
+            f"source = {toml_str(f'qemudbussrc address={address}{reconnect}{src_props} ! {repeat}')}",
             f"video_params = {toml_str(video_params)}",
             *([f"h264_encoder = {toml_str(H264[encoder])}"] if encoder != "auto" else []),
             "",
             "[profiles.apps.audio]",
-            f"source = {toml_str(f'qemudbusaudiosrc address={address} reconnect=true')}",
+            f"source = {toml_str(f'qemudbusaudiosrc address={address}{reconnect}')}",
             "",
         ]
     out += keep
