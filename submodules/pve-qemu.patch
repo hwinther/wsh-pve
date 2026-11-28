@@ -70,10 +70,10 @@ index a6c0e8d..f30c684 100755
  
  die "no QEMU machine types detected from STDIN input" if scalar (@$machines) <= 0;
 diff --git a/debian/patches/series b/debian/patches/series
-index bc240a0..c033a94 100644
+index bc240a0..bb33d89 100644
 --- a/debian/patches/series
 +++ b/debian/patches/series
-@@ -73,3 +73,146 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
+@@ -73,3 +73,148 @@ pve/0059-PVE-backup-vma-reader-reject-invalid-block-info-inst.patch
  pve/0060-PVE-backup-vma-reader-fix-verbose-restore-of-disks-b.patch
  pve/0061-PVE-backup-vma-reader-keep-vmstate-data-at-its-offse.patch
  pve/0062-PVE-backup-pbs-process-chunks-in-parallel.patch
@@ -220,6 +220,8 @@ index bc240a0..c033a94 100644
 +wsh/0189-tests-qtest-test-the-SS-600MP-boot-PROM-s-NVRAM-conf.patch
 +wsh/0190-target-sparc-let-the-SS-600MP-s-MXCC-stream-register.patch
 +wsh/0191-tests-qtest-test-the-MXCC-stream-registers-RDY-bit.patch
++wsh/0192-hw-audio-gus-put-the-left-channel-first-in-each-mixe.patch
++wsh/0193-tests-qtest-test-the-stereo-order-of-the-GUS-output.patch
 diff --git a/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch b/debian/patches/wsh/0001-esp.c-return-to-disconnected-mode-on-SCSI-bus-reset.patch
 new file mode 100644
 index 0000000..a269638
@@ -29123,6 +29125,281 @@ index 0000000..d540c62
 +     }
 + 
 +     return g_test_run();
+diff --git a/debian/patches/wsh/0192-hw-audio-gus-put-the-left-channel-first-in-each-mixe.patch b/debian/patches/wsh/0192-hw-audio-gus-put-the-left-channel-first-in-each-mixe.patch
+new file mode 100644
+index 0000000..95cb9fd
+--- /dev/null
++++ b/debian/patches/wsh/0192-hw-audio-gus-put-the-left-channel-first-in-each-mixe.patch
+@@ -0,0 +1,44 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] hw/audio/gus: put the left channel first in each mixed frame
++
++GUSemu's mixer writes each frame right channel first, left second, and
++gives the right slot PanningPos/16 of a voice and the left slot
++(15 - PanningPos)/16. QEMU's audio frames are left first, so a voice
++panned hard left (pan position 0) is heard on the right and a voice
++panned hard right on the left: every game and player that pans comes
++out mirrored.
++
++Swap the two slots: the first (left) gets (15 - PanningPos), the
++second (right) PanningPos, as on the GF1, where pan position 0 is full
++left and 15 full right. The comment on the buffer layout says left
++first now. Both 8-bit and 16-bit voices go through this one mixing
++statement; nothing else in gusemu orders the channels. No migration
++change: no state is added or reinterpreted.
++---
++ hw/audio/gusemu_mixer.c | 6 +++---
++ 1 file changed, 3 insertions(+), 3 deletions(-)
++
++diff --git a/hw/audio/gusemu_mixer.c b/hw/audio/gusemu_mixer.c
++index 56300de77e..a495d16280 100644
++--- a/hw/audio/gusemu_mixer.c
+++++ b/hw/audio/gusemu_mixer.c
++@@ -32,7 +32,7 @@
++ 
++ #define GUSvoice(position) (*(uint16_t *)(voiceptr+(position)))
++ 
++-/* samples are always 16bit stereo (4 bytes each, first right then left interleaved) */
+++/* samples are always 16bit stereo (4 bytes each, first left then right interleaved) */
++ void gus_mixvoices(GUSEmuState * state, unsigned int playback_freq, unsigned int numsamples,
++                    int16_t *bufferpos)
++ {
++@@ -171,8 +171,8 @@ void gus_mixvoices(GUSEmuState * state, unsigned int playback_freq, unsigned int
++                 }
++ 
++                 /* mix samples into buffer */
++-                *(bufferpos + 2 * sample)     += (int16_t) ((sample1 * PanningPos) >> 4);        /* right */
++-                *(bufferpos + 2 * sample + 1) += (int16_t) ((sample1 * (15 - PanningPos)) >> 4); /* left */
+++                *(bufferpos + 2 * sample)     += (int16_t) ((sample1 * (15 - PanningPos)) >> 4); /* left */
+++                *(bufferpos + 2 * sample + 1) += (int16_t) ((sample1 * PanningPos) >> 4);        /* right */
++             }
++             /* write back voice and volume */
++             GUSvoice(wVSRCurrVol)   = Volume32 / 32;
+diff --git a/debian/patches/wsh/0193-tests-qtest-test-the-stereo-order-of-the-GUS-output.patch b/debian/patches/wsh/0193-tests-qtest-test-the-stereo-order-of-the-GUS-output.patch
+new file mode 100644
+index 0000000..2b2df5d
+--- /dev/null
++++ b/debian/patches/wsh/0193-tests-qtest-test-the-stereo-order-of-the-GUS-output.patch
+@@ -0,0 +1,219 @@
++From: Hans Christian Winther-Sorensen <hc@wsh.no>
++Subject: [PATCH] tests/qtest: test the stereo order of the GUS output
++
++Program the GF1 through its ports as a DOS program does (reset and
++run, 14 active voices, a constant level written into DRAM through the
++DRAM I/O port, one looping voice at full volume) with the voice panned
++hard left and, in a second case, hard right, and record 300 ms of
++virtual time with a wav audiodev. With pan position 0 every frame with
++sound must have the voice in the left channel (QEMU's frames are left
++first) and nothing in the right, and the other way round with 15.
++
++Without the previous patch the left case fails: the voice is in the
++right channel (3840) and the left one is 0.
++---
++ tests/qtest/gus-test.c  | 182 ++++++++++++++++++++++++++++++++++++++++
++ tests/qtest/meson.build |   1 +
++ 2 files changed, 183 insertions(+)
++ create mode 100644 tests/qtest/gus-test.c
++
++diff --git a/tests/qtest/gus-test.c b/tests/qtest/gus-test.c
++new file mode 100644
++index 0000000000..0370e0d903
++--- /dev/null
+++++ b/tests/qtest/gus-test.c
++@@ -0,0 +1,182 @@
+++/*
+++ * QTest: stereo order of the Gravis Ultrasound (GF1) output
+++ *
+++ * One voice plays a constant level from the GF1's DRAM, looping, at full
+++ * volume, panned hard left (pan position 0) and then, in a second case,
+++ * hard right (15). The output goes to a wav audiodev, whose frames are
+++ * left first: with pan 0 every frame must have the voice in the left
+++ * channel and nothing in the right, and the other way round with pan 15.
+++ *
+++ * The GF1 is programmed through its ports at 240h the way a DOS program
+++ * does it: reset and run (register 4Ch), the active voices (0Eh), the
+++ * samples written into DRAM one byte at a time through the DRAM I/O port
+++ * (address in 43h/44h, data at 347h), then the voice's loop points,
+++ * current position, frequency, volume, pan and its control registers.
+++ *
+++ * SPDX-License-Identifier: GPL-2.0-or-later
+++ */
+++
+++#include "qemu/osdep.h"
+++#include "libqtest.h"
+++#include "qemu/bswap.h"
+++
+++#define GUS_BASE        0x240
+++#define GUS_VOICE_SEL   (GUS_BASE + 0x102)
+++#define GUS_REG_SEL     (GUS_BASE + 0x103)
+++#define GUS_DATA_LO     (GUS_BASE + 0x104)
+++#define GUS_DATA_HI     (GUS_BASE + 0x105)
+++#define GUS_DRAM        (GUS_BASE + 0x107)
+++
+++/* Voice registers */
+++#define GF1_VOICE_CTRL  0x00
+++#define GF1_FREQ        0x01
+++#define GF1_START_HI    0x02
+++#define GF1_START_LO    0x03
+++#define GF1_END_HI      0x04
+++#define GF1_END_LO      0x05
+++#define GF1_CUR_VOL     0x09
+++#define GF1_CUR_HI      0x0a
+++#define GF1_CUR_LO      0x0b
+++#define GF1_PAN         0x0c
+++#define GF1_RAMP_CTRL   0x0d
+++/* Global registers */
+++#define GF1_VOICES      0x0e
+++#define GF1_DRAM_LO     0x43
+++#define GF1_DRAM_HI     0x44
+++#define GF1_RESET       0x4c
+++
+++#define VOICE_LOOP      0x08            /* running, 8-bit, looping */
+++#define RAMP_STOPPED    0x03
+++#define RESET_RUN       0x01
+++#define RESET_DAC       0x02
+++
+++#define SAMPLE_BYTE     0x40            /* 8-bit signed: 16384 in 16 bits */
+++#define LOOP_LEN        16              /* samples */
+++#define FULL_VOLUME     0xf000          /* 16384: half of the sample */
+++#define LEVEL           3840            /* 4096 * 15 / 16 in the panned slot */
+++
+++#define RATE            44100
+++#define MIN_FRAMES      (RATE / 10)     /* 100 ms of sound at least */
+++
+++static void gf1_byte(QTestState *qts, uint8_t reg, uint8_t val)
+++{
+++    qtest_outb(qts, GUS_REG_SEL, reg);
+++    qtest_outb(qts, GUS_DATA_HI, val);
+++}
+++
+++static void gf1_word(QTestState *qts, uint8_t reg, uint16_t val)
+++{
+++    qtest_outb(qts, GUS_REG_SEL, reg);
+++    qtest_outb(qts, GUS_DATA_LO, val & 0xff);
+++    qtest_outb(qts, GUS_DATA_HI, val >> 8);
+++}
+++
+++static void gf1_poke(QTestState *qts, uint32_t addr, uint8_t val)
+++{
+++    gf1_word(qts, GF1_DRAM_LO, addr & 0xffff);
+++    gf1_byte(qts, GF1_DRAM_HI, (addr >> 16) & 0x0f);
+++    qtest_outb(qts, GUS_DRAM, val);
+++}
+++
+++/* Play voice 0 at the pan position for 300 ms into the wav file */
+++static void play(const char *wav, uint8_t pan)
+++{
+++    QTestState *qts;
+++    int i;
+++
+++    qts = qtest_initf("-machine pc -device gus,audiodev=snd0 "
+++                      "-audiodev wav,id=snd0,path=%s,out.frequency=%d,"
+++                      "out.channels=2,out.format=s16", wav, RATE);
+++
+++    gf1_byte(qts, GF1_RESET, 0);                       /* reset */
+++    gf1_byte(qts, GF1_RESET, RESET_RUN | RESET_DAC);
+++    gf1_byte(qts, GF1_VOICES, 0xc0 | 13);              /* 14 voices */
+++
+++    /* A constant level, one more byte than the loop for interpolation */
+++    for (i = 0; i <= LOOP_LEN; i++) {
+++        gf1_poke(qts, i, SAMPLE_BYTE);
+++    }
+++
+++    /* Positions are 20.9 fixed point: address << 9 */
+++    qtest_outb(qts, GUS_VOICE_SEL, 0);
+++    gf1_word(qts, GF1_START_HI, 0);
+++    gf1_word(qts, GF1_START_LO, 0);
+++    gf1_word(qts, GF1_END_HI, 0);
+++    gf1_word(qts, GF1_END_LO, LOOP_LEN << 9);
+++    gf1_word(qts, GF1_CUR_HI, 0);
+++    gf1_word(qts, GF1_CUR_LO, 0);
+++    gf1_word(qts, GF1_FREQ, 1024);                     /* a sample a frame */
+++    gf1_word(qts, GF1_CUR_VOL, FULL_VOLUME);
+++    gf1_byte(qts, GF1_RAMP_CTRL, RAMP_STOPPED);
+++    gf1_byte(qts, GF1_PAN, pan);
+++    gf1_byte(qts, GF1_VOICE_CTRL, VOICE_LOOP);
+++
+++    for (i = 0; i < 30; i++) {
+++        qtest_clock_step(qts, 10 * 1000 * 1000);
+++    }
+++    qtest_quit(qts);
+++}
+++
+++/*
+++ * The wav file's frames: after any silence before the voice starts, the
+++ * slot the voice is panned to holds the level and the other one nothing,
+++ * in every frame with sound.
+++ */
+++static void check_wav(const char *path, bool want_left)
+++{
+++    g_autofree uint8_t *wav = NULL;
+++    gsize len, frames, i, sound = 0;
+++    int16_t l, r, on, off;
+++
+++    g_assert_true(g_file_get_contents(path, (gchar **)&wav, &len, NULL));
+++    g_assert_cmpuint(len, >, 44);
+++    g_assert_cmpmem(wav, 4, "RIFF", 4);
+++    g_assert_cmpuint(lduw_le_p(wav + 22), ==, 2);           /* channels */
+++    g_assert_cmpuint(ldl_le_p(wav + 24), ==, RATE);         /* Hz */
+++    g_assert_cmpuint(lduw_le_p(wav + 34), ==, 16);          /* bits */
+++    frames = (len - 44) / 4;
+++
+++    for (i = 0; i < frames; i++) {
+++        l = lduw_le_p(wav + 44 + 4 * i);
+++        r = lduw_le_p(wav + 44 + 4 * i + 2);
+++        if (l == 0 && r == 0) {
+++            g_assert_cmpuint(sound, ==, 0);   /* no gap once it plays */
+++            continue;
+++        }
+++        on = want_left ? l : r;
+++        off = want_left ? r : l;
+++        g_assert_cmpint(off, ==, 0);
+++        g_assert_cmpint(on, >=, LEVEL - 16);
+++        g_assert_cmpint(on, <=, LEVEL);
+++        sound++;
+++    }
+++    g_assert_cmpuint(sound, >=, MIN_FRAMES);
+++}
+++
+++static void test_pan(gconstpointer data)
+++{
+++    uint8_t pan = GPOINTER_TO_UINT(data);
+++    g_autofree char *wav = NULL;
+++    int fd;
+++
+++    fd = g_file_open_tmp("gus-test-XXXXXX.wav", &wav, NULL);
+++    g_assert_cmpint(fd, >=, 0);
+++    close(fd);
+++    play(wav, pan);
+++    check_wav(wav, pan == 0);
+++    unlink(wav);
+++}
+++
+++int main(int argc, char **argv)
+++{
+++    g_test_init(&argc, &argv, NULL);
+++
+++    if (!qtest_has_device("gus")) {
+++        g_test_skip("gus not built in");
+++        return g_test_run();
+++    }
+++    qtest_add_data_func("/gus/pan/left", GUINT_TO_POINTER(0), test_pan);
+++    qtest_add_data_func("/gus/pan/right", GUINT_TO_POINTER(15), test_pan);
+++
+++    return g_test_run();
+++}
++diff --git a/tests/qtest/meson.build b/tests/qtest/meson.build
++index 8d2c13761b..d204c8d5af 100644
++--- a/tests/qtest/meson.build
+++++ b/tests/qtest/meson.build
++@@ -76,6 +76,7 @@ qtests_i386 = \
++   (config_all_devices.has_key('CONFIG_PVPANIC_ISA') ? ['pvpanic-test'] : []) +              \
++   (config_all_devices.has_key('CONFIG_PVPANIC_PCI') ? ['pvpanic-pci-test'] : []) +          \
++   (config_all_devices.has_key('CONFIG_HDA') ? ['intel-hda-test'] : []) +                    \
+++  (config_all_devices.has_key('CONFIG_GUS') ? ['gus-test'] : []) +                          \
++   (config_all_devices.has_key('CONFIG_I82801B11') ? ['i82801b11-test'] : []) +             \
++   (config_all_devices.has_key('CONFIG_IOH3420') ? ['ioh3420-test'] : []) +                  \
++   (config_all_devices.has_key('CONFIG_LPC_ICH9') ? ['lpc-ich9-test'] : []) +              \
 diff --git a/debian/pve-qemu-kvm.lintian-overrides b/debian/pve-qemu-kvm.lintian-overrides
 index 6fb5116..799c744 100644
 --- a/debian/pve-qemu-kvm.lintian-overrides
