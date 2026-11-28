@@ -179,9 +179,11 @@ with the network down, so the result doesn't depend on the internet (with a netw
 fetches some packages from pkgs.tribblix.org; without one it skips those few, see the sparc lab's
 README). The first boot sets root's password, writes the marker, sets a static address with `ipadm`,
 the default route, DNS and the optional user, and locks the live CD's `jack` account that the
-installer copies along. The pool shows DEGRADED after the install: the fault manager counts the I/Os
-that ZFS had to retry on the emulated IDE disk (no data errors); the first boot runs `zpool clear
-rpool` (whether the mark stays away wasn't checked yet). Most of the time goes to the SMF import:
+installer copies along. Before the install the scenario caps ZFS's I/O aggregation at 128 KB
+(`set zfs:zfs_vdev_aggregation_limit = 0x20000` in `/etc/system`, copied to the installed system):
+illumos ZFS joins I/Os up to 1 MB, the IDE disk driver refuses anything over 128 KB, ZFS retries
+the parts, and without the cap the fault manager counted those retries and marked the disk
+DEGRADED (no data errors). Most of the time goes to the SMF import:
 through PVE the install took 141 minutes (the live CD's login after 61), the first boot 89 (its
 login after 70: it imports the 99 service descriptions again) and `--check` 26. Only that first
 boot from the disk imports them: later boots come to `console login:` in 12-14 minutes (two

@@ -4003,7 +4003,8 @@ time. What is left (3-9% on the BSDs and Solaris) is the 100 us spin before each
 periodic work and QEMU's timers. Solaris 10 needs several minutes after the login prompt until SMF has
 started everything (`svc.configd`, `inetd`, `snmpd`, `fmd` at 30-40% of the guest CPU): measured too
 early it reads 100% with or without the halt. Tribblix's FMA marks its ZFS disk DEGRADED again within
-minutes (the known EIO ereports, "Tribblix on sun4u", also after `zpool clear`), and `rcm_daemon` then
+minutes (the EIO ereports, "Tribblix on sun4u", also after `zpool clear`; the cause and the 128 KB
+aggregation cap are in "The DEGRADED disk" there; idle not measured again with it), and `rcm_daemon` then
 spins (67% of the guest CPU after 3.5 hours in one run): a guest that busy rarely reaches its idle loop,
 so with `fmd` running it reads 104-108% either way. With `fmd` disabled (`svcadm disable fmd`, which a
 real installation shouldn't do) it idles at 21.8% (258 111 halts traced in the run); the rest is
@@ -4406,11 +4407,57 @@ an older Tribblix on sun4u (`no nucleus hblk8`, fixed by 0003). Lab, QEMU starte
   copy and marked `c1t0d0s0` DEGRADED ("too many errors"); `zpool status` showed 0 read, write and
   checksum errors and "No known data errors", `iostat -En` 0 soft, hard and transport errors on the
   disk, and `fmdump -e` 9097 `ereport.fs.zfs.io`, all but one with `zio_err = 5` (EIO), sizes from
-  512 bytes to 384 KB. So single I/Os failed with EIO and succeeded when ZFS retried them. ZFS
-  sends its first attempt with `B_FAILFAST`; whether `dad`/`uata` fails those early under QEMU's
-  cmd646, and why, wasn't traced. The OpenIndiana SPARC README's note that root pools on the Ultra
-  5/10 built-in IDE "will be unusable" (workaround: disable `fmd`) looks like the same thing on real
-  hardware.
+  512 bytes to 384 KB. So single I/Os failed with EIO and succeeded when ZFS retried them. Not
+  QEMU and not `wsh/0135`'s kind of lost interrupt: the cause is in illumos (below), and the lab
+  works around it with a ZFS tunable (`_tribblix.limit_zfs_aggregation()`, 2026-11-28).
+- **The DEGRADED disk: ZFS's aggregated I/O is larger than `dad` takes (2026-11-28).** illumos
+  ZFS joins adjacent queued I/Os into one of up to `zfs_vdev_aggregation_limit` (1 MB in this
+  illumos). `dad`, the IDE disk driver on sun4u, refuses any buf
+  over `MAX_ATA_XFER_SIZE` (256 sectors, 128 KB): `dcdstrategy()` fails it with `EINVAL` before a
+  command is built, so there is no console message and no `iostat -En` count. `vdev_disk` turns
+  every error into EIO and ZFS retries the logical I/Os one at a time (`ZIO_FLAG_DONT_AGGREGATE`),
+  which fit, so no data is lost; but each part of the failed aggregate is an
+  `ereport.fs.zfs.io`, and a read aggregate also hands its unread buffer to its parts
+  (`vdev_queue_agg_io_done()` copies it whatever the error; read from the source), whose checksum verify then reports
+  `ECKSUM` over the whole buffer (`bad_ranges = 0x0 <size>`): `ereport.fs.zfs.checksum` and the
+  pool's CKSUM column. FMA's `zfs-diagnosis` counts them and marks the disk DEGRADED within
+  minutes of any sustained I/O: during the install, on every later boot with a scrub or a big
+  copy, and again after `zpool clear`. The SCSI disk driver `sd` splits large bufs itself, so
+  the same pool on `lsi` wouldn't do this (not measured). On a real Ultra 5/10 `dad` has the
+  same limit, which fits the OpenIndiana SPARC README's warning about root pools on the built-in
+  IDE.
+  Measured on copies of the stored `install-tribblix-m34-sun4u.raw` (lab, `qemu-system-sparc64`
+  built from the series to 0191, the package's OpenBIOS, 2048 MB, an investigation scenario not
+  in the repo: log in, `zpool scrub rpool`, watch, then set the limit to 128 KB with `mdb -kw`
+  and scrub again), with DTrace on `dad`'s `dcdstrategy()`, `vdev_disk_io_intr()` and
+  `zio_checksum_error()`:
+
+  | Run, binary | Default limit (1 MB): scrub | With 128 KB: scrub |
+  | --- | --- | --- |
+  | r1, published 11.1.3-4+wsh37 | CKSUM 18.7K, `zio_err = 5` ereports of 16 KB-288 KB | not run |
+  | r2, series to 0191 | CKSUM 19.6K, 11 965 ereports, disk DEGRADED ("too many errors") | no new ereport, CKSUM unchanged |
+  | r3, series to 0191 | CKSUM 17.8K, ereports of up to 930 KB | CKSUM unchanged |
+  | r4, series to 0191, DTrace | 1032 bufs over 128 KB reached `dcdstrategy()`, all 1032 came back with `b_error` 22 (`EINVAL`), reads and writes of 144 KB to 1 MB; 16 233 `ECKSUM` from `zio_checksum_error()`, 128 KB each; CKSUM 15.9K | none more (still 1032, 1032, 16 233) while `cpio` copied 130 MB and the scrub ran again; CKSUM unchanged |
+
+  (`fmdump -e` counts only once `fmd` is up: on these boots SMF reached it 20-30 minutes after
+  the login, and ereports from before that were partly dropped.) So FMA's mark is the guest's
+  own bookkeeping; QEMU's cmd646, the sabre and the IDE interrupts did nothing wrong in these
+  runs: no buf over 128 KB was ever sent to the controller. The fix belongs in illumos (`dad`
+  should take or split what ZFS sends, or `vdev_disk` should honour `dki_maxtransfer`); not
+  reported. **Workaround in the lab:** `tribblix-install-sparc64.py` (ZFS) sets
+  `zfs_vdev_aggregation_limit` to 128 KB in the live kernel before `live_install.sh` and adds
+  `set zfs:zfs_vdev_aggregation_limit = 0x20000` to the live `/etc/system`, which the installer
+  copies to the installed system; `tribblix-firstboot.py` sets it again for disks installed
+  before. Proof (lab, the same binary and firmware, `tribblix-install-sparc64.py` from the blank
+  disk, 2026-11-28): passed in 93 minutes (live CD login 51, `live_install.sh` 38, power-off 3,
+  18 packages skipped offline as before), `rpool` ONLINE with 0 read, write and checksum errors and
+  no FMA message on the console; the earlier lab installs took 48-64 minutes in the installer with
+  the disk DEGRADED. The installed disk's first boot (SMF import of 99
+  manifests) came up with the line in `/etc/system` and the limit at 131072 from it, `rpool`
+  ONLINE with 0 errors after the import (a copy booted with `tribblix-boot-disk.py`, login after
+  60 minutes; `fmd` had logged no ereport by then), and `tribblix-firstboot.py` on the disk itself
+  passed in 64 minutes (login 53, `zpool status -x`: all pools healthy). Not run: `--check`
+  through PVE, a reinstall of the stored disk, idle or a long soak with the cap.
 - **The ZFS boot block (patch 0017):** OpenBIOS loads the ZFS boot block from the disk and it loads
   its second stage (the `zfs-file-system` package from 512 KB into the slice), then
   `Unhandled Exception 0x0000000000000030` with the PC in `unaligned-l@`. The Forth return stack read

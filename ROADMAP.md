@@ -179,10 +179,12 @@ merged; what is left of them is item 2 under "Next".
    - after the firmware reboot (Done): Tribblix's reboot not tried; the reboot's boot string is
      still dropped (Solaris 8's mini-root needs `auto-boot?` false and `boot disk:b`; the `sparc64`
      matrix case `nb111-reboot-bootstr-sparc64` only checks that such a reboot comes back);
-   - Tribblix: with a ZFS root FMA marks the IDE disk DEGRADED during the install (EIO on first
-     attempts that ZFS retries, no data errors; a UFS install, `ROOT_FS=ufs`, hasn't been booted;
-     Debian 13's lost IDE interrupt was the sunhme holding the sabre, `wsh/0135`, and whether
-     Tribblix's EIO has the same cause is not checked);
+   - Tribblix: a UFS install (`ROOT_FS=ufs`) hasn't been booted. The ZFS root's DEGRADED disk is
+     explained (not QEMU, not `wsh/0135`'s kind): illumos ZFS aggregates I/O up to 1 MB and `dad`
+     refuses bufs over 128 KB with `EINVAL`; the install and first-boot scenarios cap
+     `zfs_vdev_aggregation_limit` at 128 KB (SPARC.md, "The DEGRADED disk"); an illumos fix is
+     not reported; the installer phase took 38 minutes with the cap in the lab (48-64 before); the
+     stored disk predates the cap until it is reinstalled;
      the live CD's package catalogue is older than its packages (a Tribblix issue); 257 minutes
      through PVE, over the install matrix's 240-minute limit, so it stays out of it.
    Details: `submodules/SPARC.md`, "Solaris on sun4u" and "Tribblix on sun4u".

@@ -699,7 +699,7 @@ loop of these guests and halts the virtual CPU there until the next interrupt:
 | NetBSD 9.3 and 11.1 | 100% / 3.5% |
 | OpenBSD 8.0 | 100% / 5-9% |
 | Solaris 9 9/05 and 10 1/13 | 102% / 5-7% |
-| Tribblix m34 (illumos) | 102% / 22%, but only with FMA's `fmd` off: on QEMU's IDE its ZFS disk soon gets marked DEGRADED and `rcm_daemon` then keeps the guest busy (104-108% either way) |
+| Tribblix m34 (illumos) | 102% / 22%, but only with FMA's `fmd` off: without the aggregation cap of step 3 under [Tribblix (illumos)](#tribblix-illumos) its ZFS disk soon gets marked DEGRADED and `rcm_daemon` then keeps the guest busy (104-108% either way; not measured again with the cap) |
 
 Patches `wsh/0070`-`0072` (not in a package yet) add Linux and Solaris 7 and 8:
 
@@ -825,10 +825,12 @@ in about one of three long runs. With the fixes, measured in the sparc lab and t
    under emulation; it asks for the keyboard layout (Return for US-English) and comes to `tribblix
    console login:`. Log in as `root` (password `tribblix`). The disk is `c1t0d0`.
 3. Take the network down (`ipadm delete-if hme0`; otherwise the installer fetches some packages
-   from the internet) and install with the CD's installer: `cd /root; ./live_install.sh -G c1t0d0`
-   (Tribblix's default, a ZFS root pool; about an hour). The fault manager marks the disk DEGRADED
-   during the copy (I/O that ZFS had to retry on the emulated IDE disk; no data errors); `zpool clear
-   rpool` on the installed system should remove the mark (not checked yet).
+   from the internet), cap ZFS's I/O aggregation at the IDE disk driver's 128 KB (`echo 'set
+   zfs:zfs_vdev_aggregation_limit = 0x20000' >> /etc/system` for the installed system, which gets
+   the live CD's `/etc`, and `echo 'zfs_vdev_aggregation_limit/W 0t131072' | mdb -kw` for the
+   install itself; without it the fault manager marks the disk DEGRADED within minutes, for I/O
+   that ZFS had to retry, with no data errors) and install with the CD's installer: `cd /root;
+   ./live_install.sh -G c1t0d0` (Tribblix's default, a ZFS root pool; about an hour).
 4. `init 5`, eject the CD (or put `ide0` first in the boot order) and start the VM: the installed
    system's first boot imports the service descriptions again (99 of them; `console login:` after
    about 70 minutes). Only the first boot does that: later boots reach `console login:` in 12-14
