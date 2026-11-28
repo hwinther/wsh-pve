@@ -260,9 +260,16 @@ merged; what is left of them is item 2 under "Next".
      directly: `AUDTEST.COM` programs the GF1 (reset, a sine period into DRAM through the DRAM I/O
      port, two looping voices panned left and right) and the WSS codec (mode change, 16-bit stereo
      at 16 kHz by auto-init DMA), a different tone on each channel, checked one channel at a time
-     (`wavcheck.py --channel`, with the tone's duration). Both play. Found: QEMU's GUS swaps left
-     and right (GUSemu's mixer writes each frame right first; a fix would be a pve-qemu patch,
-     not made); the CS4231A plays by DMA only (no PIO, no WSS configuration register at 530h).
+     (`wavcheck.py --channel`, with the tone's duration). Both play. Found: QEMU's GUS swapped left
+     and right (GUSemu's mixer wrote each frame right first, QEMU's frames are left first; also in
+     QEMU master): pve-qemu `wsh/0192` puts left first (qtest `gus-test`, `wsh/0193`; in review,
+     [write-up](upstream/qemu-gus-stereo-order.md)). The matrix asks the QEMU under test for its
+     order without a guest (`gus_order()`, the qtest's port writes over the qtest protocol) and
+     expects that order; with the fix the DOS case gives 551.25 Hz left and 1102.5 Hz right (lab
+     build), with the published 11.1.3-4+wsh37 the probe still says swapped. Once every package
+     the matrix runs carries 0192: drop `gus_order()` and the swapped branch of `judge_stereo()`,
+     so the GUS case expects the programmed order only. The CS4231A plays by DMA only (no PIO, no
+     WSS configuration register at 530h).
      Next: Windows guests (9x with SB16/ES1370, XP with AC97/HDA); listening on a real node over `pa`.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
      older Linux.
@@ -1383,7 +1390,8 @@ hang), the cmd646 interrupt latch, sun4u's IDPROM ignoring a NIC added with `-de
 `%softint` race, the ESP CDB counted with the message out bytes and the trap a bus error takes on a
 SuperSPARC load (SunOS 4.1.3, `upstream/qemu-sparc32-supersparc-bus-error-trap.md`) and the VGA
 attribute address read as 0 in the data state (The Incredible Machine,
-`upstream/qemu-vga-ar-index-read.md`) (QEMU); the ESP selection timeout, Stop-A powering the machine
+`upstream/qemu-vga-ar-index-read.md`) and the GUS's swapped stereo channels
+(`upstream/qemu-gus-stereo-order.md`) (QEMU); the ESP selection timeout, Stop-A powering the machine
 off, the sparc64 fixes 0003-0011 and 0013-0017, and the MMU miss handlers enabling interrupts at
 TL 1 and the trap-state walk through TL 0 (0032-0033, found with FreeBSD 12.4) (OpenBIOS); the
 SS-600MP's VMEbus registers, lebuffer and node names for SunOS 4.1.2 (both,
