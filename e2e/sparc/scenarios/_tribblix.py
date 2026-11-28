@@ -5,6 +5,7 @@ The live CD and a freshly installed disk have the same accounts: `root` with the
 and `jack`/`jack` (tribblix.org, "Installing Tribblix on SPARC"); the installer copies the live /etc.
 The install target's first boot gives root the lab password.
 """
+import re
 import time
 
 from _sparc64 import shell
@@ -44,6 +45,26 @@ def login(m, password, timeout):
     m.send("bind 'set enable-bracketed-paste off'\r")
     m.expect(r"[#$] ?$", 120)
     shell(m, "true")  # past the login messages
+
+
+# illumos ZFS joins adjacent I/Os into one of up to zfs_vdev_aggregation_limit (1 MB), but dad, the
+# driver of the sun4u IDE disk, refuses any buf over 128 KB (MAX_ATA_XFER_SIZE in dad.c; the
+# aggregate fails without a message or an error count, and ZFS turns that into EIO), so ZFS retries
+# the parts one at a time and FMA counts every failed first attempt: thousands of ereports, the disk
+# DEGRADED (submodules/SPARC.md, "Tribblix on sun4u"). Aggregates of at most 128 KB fit.
+AGGREGATION_LIMIT = 131072
+
+
+def limit_zfs_aggregation(m):
+    """Keep ZFS's aggregated I/Os within dad's 128 KB, now (mdb) and from the next boot on
+    (/etc/system, which live_install.sh copies from the live CD to the installed system)."""
+    shell(m, "modinfo | grep -w zfs >/dev/null || modload /kernel/fs/sparcv9/zfs; grep -q"
+             " zfs_vdev_aggregation_limit /etc/system || echo 'set zfs:zfs_vdev_aggregation_limit"
+             f" = {AGGREGATION_LIMIT:#x}' >> /etc/system", 300)
+    out, _ = shell(m, f"echo 'zfs_vdev_aggregation_limit/W 0t{AGGREGATION_LIMIT}' | mdb -kw >/dev/null;"
+                      " echo zfs_vdev_aggregation_limit/D | mdb -k; grep zfs_vdev /etc/system", 300)
+    if not re.search(rf"zfs_vdev_aggregation_limit:\s+{AGGREGATION_LIMIT}\b", out):
+        raise AssertionError(f"zfs_vdev_aggregation_limit wasn't set to {AGGREGATION_LIMIT}:\n{out}")
 
 
 def power_off(m):
