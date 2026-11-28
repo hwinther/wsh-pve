@@ -72,7 +72,16 @@ def power_off(m):
     QEMU ended."""
     t0 = time.time()
     m.send("sync; init 5\r")
-    code = m.wait_exit(1800)  # services time out on the way down under TCG: 3.5-12.5 min seen
+    try:
+        code = m.wait_exit(1800)  # services time out on the way down under TCG: 3.5-12.5 min seen
+    except Exception:
+        # one UFS first boot printed nothing for 30 minutes after "70 system services are now being
+        # stopped" (submodules/SPARC.md, "Tribblix on sun4u"): keep the CPU's state for next time
+        try:
+            m.log("info registers:\n" + m.hmp("info registers"))
+        except Exception as e:
+            m.log(f"info registers failed: {type(e).__name__}: {e}")
+        raise
     if code != 0:
         raise AssertionError(f"QEMU exited with {code} after init 5")
     return time.time() - t0

@@ -14,6 +14,11 @@ The guest changes the disk (logs, the reboot's sync): give it a copy.
   PROMPT, USER, PASSWORD, POWEROFF, FIRSTBOOT  override GUEST's
   REBOOT    the reboot command                                   (reboot)
   REBOOTS   how many times to reboot and log in again             (3)
+  EXPECT    a regex the console must show after each reboot's banner, before the login prompt, e.g.
+            the firmware's `Rebooting with command: boot <bootspec>` for a reboot with a boot string
+            (OpenBIOS patch 0041)                                  (none)
+  CHECK     a regex the output of COMMANDS must contain after the last login, else the run fails;
+            COMMANDS runs only with CHECK set                      (none)
   TIMEOUT   seconds from QEMU start (or the banner) to the login prompt   (900)
   BANNER_TIMEOUT  seconds from the reboot command to the firmware's banner (600)
 
@@ -25,13 +30,14 @@ Metrics (result.json): boot_s (QEMU start to the first login prompt), reboot_s (
 the banner, per reboot), relogin_s (the reboot command to the next login prompt, per reboot),
 poweroff_s.
 """
+import re
 import time
 
 import lab
 from _sparc64 import DEFAULTS as BASE, guest_defaults, login, power_off, qemu_args as sparc64_args, shell
 
 DEFAULTS = {**BASE, "MEM": "1024", "BOOT": "c", "GUEST": "", "PROMPT": "", "USER": "", "PASSWORD": "",
-            "FIRSTBOOT": "", "POWEROFF": "", "COMMANDS": "", "REBOOT": "reboot", "REBOOTS": "3",
+            "FIRSTBOOT": "", "POWEROFF": "", "COMMANDS": "", "REBOOT": "reboot", "REBOOTS": "3", "EXPECT": "", "CHECK": "",
             "TIMEOUT": "900", "BANNER_TIMEOUT": "600"}
 
 BANNER = r"OpenBIOS for Sparc64"
@@ -71,7 +77,14 @@ def run(m, v):
             raise AssertionError(f"reboot {n}: the firmware didn't reset the machine (matched {[BANNER, RETURNED, PROMPT0][i]!r})")
         m.metrics.setdefault("reboot_s", []).append(round(time.time() - t0, 1))
         m.snap(f"reboot {n}: firmware banner")
+        if v["EXPECT"]:
+            m.expect(v["EXPECT"], int(v["TIMEOUT"]))
         login(m, v, int(v["TIMEOUT"]))
         m.metrics.setdefault("relogin_s", []).append(round(time.time() - t0, 1))
         m.snap(f"reboot {n}: logged in again")
+    if v["CHECK"]:
+        out, _ = shell(m, v["COMMANDS"].replace(";;", ";"), 300)
+        m.snap("commands")
+        if not re.search(v["CHECK"], out, re.M):
+            raise AssertionError(f"no {v['CHECK']!r} in the output of the commands:\n{out}")
     m.metrics["poweroff_s"] = round(power_off(m, v), 1)
