@@ -186,7 +186,13 @@ merged; what is left of them is item 2 under "Next".
      netbsd`, and try `sol8-sun4u` without `prom_env` (its mini-root reboot;
      `solaris-webstart-serial.py` then has to wait for the firmware to boot `disk:b`, as it does
      for the SS-5 PROM);
-   - Tribblix: a UFS install (`ROOT_FS=ufs`) hasn't been booted. The ZFS root's DEGRADED disk is
+   - Tribblix: a UFS install (`ROOT_FS=ufs`) installs (97 minutes) and boots in the lab (first
+     boot 41 minutes to login, later boots 8-9; no EIO reports, so no ZFS cap needed), but its
+     first `init 5` hung once (no output for 30 minutes; the next ones finished): not
+     understood, not through PVE, so the target stays with ZFS. Shorter runs: `poweroff`
+     instead of `init 5` in `_tribblix.power_off()` (93 s instead of 10-13 minutes, pool healthy
+     afterwards; ~25-30 minutes of the target's 257) is measured but not switched; the SMF import
+     (31-38 minutes on each first boot and every live CD boot) is the rest. The ZFS root's DEGRADED disk is
      explained (not QEMU, not `wsh/0135`'s kind): illumos ZFS aggregates I/O up to 1 MB and `dad`
      refuses bufs over 128 KB with `EINVAL`; the install and first-boot scenarios cap
      `zfs_vdev_aggregation_limit` at 128 KB (SPARC.md, "The DEGRADED disk"); an illumos fix is

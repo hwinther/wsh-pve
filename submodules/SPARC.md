@@ -4484,10 +4484,42 @@ an older Tribblix on sun4u (`no nucleus hblk8`, fixed by 0003). Lab, QEMU starte
   With 0017 the boot block reads the pool and loads the kernel and boot archive from ZFS, and the
   installed system boots from its ZFS root.
 - **Install, UFS:** `/root/ufs_install.sh -n <host> c1t0d0s0` after labelling the disk with slice 0
-  for `/` and slice 1 for swap (`format-a-disk.sh`, then `fmthard`; its newfs asks `(y/n)?`). Through
-  PVE it ran newfs, the copy, the overlays and `installboot -F ufs` without ZFS's EIO reports, then
-  the clock stopped (below) while it configured the devices. Not booted yet; the install target
-  stays with ZFS.
+  for `/` and slice 1 for swap (`format-a-disk.sh`, then `fmthard`; its newfs asks `(y/n)?`).
+  Through PVE (before `wsh/0036`) it ran newfs, the copy, the overlays and `installboot -F ufs`
+  without ZFS's EIO reports, then the clock stopped while it configured the devices. In the lab on
+  2026-11-28 (`tribblix-install-sparc64.py ROOT_FS=ufs`, QEMU from the series to `wsh/0191`, the
+  package's `openbios-sparc64`, 2048 MB, a blank 8 GB disk) it installs and boots:
+
+  | Phase | Result |
+  | --- | --- |
+  | install | passed in 97 minutes: live CD login 50 (its SMF import 34), `ufs_install.sh` 42 (newfs, the copy and the overlays 38; 18 packages skipped offline, as with ZFS), `init 5` 4; `/a` on `c1t0d0s0`, swap `c1t0d0s1` in `vfstab`, the boot archive written |
+  | first boot (`tribblix-firstboot.py`) | the UFS boot block loads the kernel (banner 102 s), SMF imports 99 manifests in 31 minutes (ZFS: 38), `console login:` after 41 minutes (ZFS: 53); root's password set and `jack` locked; then `init 5` printed `70 system services are now being stopped` and nothing more for 30 minutes, and the scenario stopped QEMU (1 of 1; the registers weren't kept: `_tribblix.power_off()` now logs them) |
+  | the next boot (`sparc64-reboot.py GUEST=tribblix REBOOTS=0`) | `console login:` after 492 s (ZFS: 740-900 s), `/` on `c1t0d0s0` (no fsck message after the stopped shutdown: UFS logging), swap on `c1t0d0s1`; `init 5` in 241 s (`Shutdown took 235 seconds`; ZFS: 560-785 s) |
+  | `reboot` x1 on the same disk (`sparc64-reboot.py`) | passed: login 521 s after QEMU started, the banner 41 s after `reboot`, `console login:` again 583 s after it; `init 5` in 443 s (`Shutdown took 425 seconds`) |
+
+  No EIO ereport and no FMA message about the disk (only the live CD's `SMF-8000-YX` for
+  `network/location` and `nwam` once the scenario has taken the network down): UFS sends `dad`
+  nothing over 128 KB, so the ZFS cap isn't needed. The install target stays with ZFS (Tribblix's
+  default) until the hung `init 5` is understood and the UFS install has been run through PVE.
+- **Where the time goes (2026-11-28).** From the lab runs above (2048 MB, one or two guests at
+  once; times from the serial recordings):
+  - The installed system's first boot imports 99 SMF manifests: 38 minutes (from 269 s to
+    2573 s after QEMU started, ~23 s a manifest), then 10 more minutes to `console login:`
+    (53 minutes in all); on UFS 31 and 41 minutes. The live CD does the same on every boot (95
+    manifests, 34 minutes). Later boots of the disk come to login in 13-16 minutes without
+    importing anything (UFS: 8-9).
+  - Shutting down through SMF is slow: `init 5` and `init 6` took 562-785 s on ZFS and 235-425 s
+    on UFS (`Shutdown took`),
+    much of it services killed only when their stop method times out (`network/location`,
+    `network/physical:nwam`, `update-man-index`). `poweroff` skips the SMF shutdown: 93 and 94 s
+    from the command to QEMU's exit on a copy of the installed ZFS disk, and the next boot came up
+    normally with `zpool status -x`: all pools healthy (2 of 2). The install target powers off
+    three times (after the install, the first boot and the check), so `poweroff` in
+    `_tribblix.power_off()` would save about 25-30 of its 257 minutes. Not changed yet: not run
+    through PVE.
+  - Not tried: skipping the installed system's import by copying the live CD's imported
+    repository (`/etc/svc/repository.db`) into the new root (it carries the live CD's state, so it
+    needs a check of what differs), or a live CD whose repository is pre-built (Tribblix's side).
 - **The package set:** the live CD's package catalogue names older versions than the CD carries
   (the base overlay asks for `TRIBcurl.8.12.1.1.zap`, `/pkgs` has `TRIBcurl.8.19.0.0.zap`). With a
   network the installer fetched those packages from pkgs.tribblix.org (some downloads failed with

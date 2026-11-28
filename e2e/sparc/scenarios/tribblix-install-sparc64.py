@@ -14,7 +14,8 @@ with tribblix-firstboot.py (root's password, marker, network) and tribblix-boot-
              c1t0d0 on the live CD)
   ROOT_FS    zfs: live_install.sh -G, with ZFS's aggregated I/Os kept within the IDE disk driver's
              128 KB (_tribblix.limit_zfs_aggregation(): without it FMA marked the disk DEGRADED on
-             the way); ufs: ufs_install.sh on slice 0, swap on slice 1 (SWAP_MB), not booted yet  (zfs)
+             the way); ufs: ufs_install.sh on slice 0, swap on slice 1 (SWAP_MB); installs and
+             boots (lab, submodules/SPARC.md "Install, UFS"), not run through PVE  (zfs)
   SWAP_MB    the swap slice with ROOT_FS=ufs, rounded up to whole cylinders  (1024)
   OVERLAYS   overlays to install on top of base, from the CD (none: base only)  (none)
   BOOT_TIMEOUT    seconds from the start to the live CD's login prompt    (5400)

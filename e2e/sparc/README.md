@@ -2457,7 +2457,8 @@ boot-test the stored disk").
    default: a ZFS root pool on the whole disk). It powers off with `init 5`.
    `ROOT_FS=ufs` labels the disk instead (`format-a-disk.sh`, then `fmthard`: slice 0 for `/`,
    `SWAP_MB` = 1 GB of swap on slice 1) and runs `echo y | /root/ufs_install.sh -n <host name>
-   c1t0d0s0` (its newfs asks); that ran through PVE up to its last steps but hasn't been booted.
+   c1t0d0s0` (its newfs asks); in the lab that installs and boots (2026-11-28, table below), not
+   run through PVE to the end yet.
 2. **First boot** (`tribblix-firstboot.py`): root logs in with `tribblix` (the installer copies the
    live CD's `/etc`), `passwd root` sets the target's password (with `MINNONALPHA` relaxed for that
    call, as on Solaris 10), `passwd -l jack` locks the live CD's user, the marker, the network with
@@ -2506,6 +2507,7 @@ the published packages needed that day), 2026-11-18:
 | `tribblix-boot-disk.py` on that disk | the commands passed (`target=tribblix-m34-sun4u`, `hme0/v4` static after the reboot, `jack LK`, `lab`); the default route was missing after the reboot (since then also in `/etc/defaultrouter`); `init 5` took longer than the 900 s the scenario waited then (now 1800) | login 16 min |
 | `tribblix-install-sparc64.py ROOT_FS=zfs`, lab | passed: disk `c1t0d0` found, offline, `live_install.sh` exit 0, 18 packages skipped, `rpool` DEGRADED, `init 5` | 106 min (live CD login 55, install 48, power-off 3) |
 | the same with the 128 KB aggregation cap (2026-11-28, `qemu-system-sparc64` built from the series to 0191) | passed: `live_install.sh` exit 0, 18 packages skipped, `rpool` ONLINE, 0 read, write and checksum errors | 93 min (live CD login 51, install 38, power-off 3) |
+| `tribblix-install-sparc64.py ROOT_FS=ufs`, lab (2026-11-28, the same binary) | passed: slice 0 `/`, slice 1 swap, `ufs_install.sh` exit 0, 18 packages skipped, boot archive; then `tribblix-firstboot.py` logged in after the SMF import (41 min) and set root's password, but its `init 5` hung (no output for 30 min); the next boot (login 8 min, `init 5` 4 min) and a `reboot` (login again 10 min after it) passed | 97 min (live CD login 50, install 42, power-off 4) |
 | `lab.py install tribblix-m34-sun4u --vmid 9401`/`9402` (ZFS, first versions) | the live CD booted through PVE, login after 48 min; the scenario's marker never matched behind bash's bracketed paste escapes (fixed); stopped | |
 | `--vmid 9403` (UFS) | label written, `ufs_install.sh` waited at newfs's `(y/n)?` (fixed: `echo y \|`); stopped | |
 | `--vmid 9404` (UFS) | the clock stopped during the live CD's SMF import (11/95); stopped | |
