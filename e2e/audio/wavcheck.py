@@ -1,13 +1,17 @@
 """What a wav file from QEMU's `wav` audio backend holds: its level and the tones in it.
 
-    python3 wavcheck.py out.wav [--expect 1000 --expect 440] [--absent 750]
+    python3 wavcheck.py out.wav [--expect 1000 --expect 440] [--absent 750] [--channel left]
+                                [--duration 0.9 1.6]
 
 Standard library only. The file is cut into windows of about 46 ms; a window is loud when its RMS is
 above -50 dBFS, and the frequency of a loud window comes from its zero crossings (with hysteresis,
 after removing the window's mean). Consecutive loud windows at the same frequency (within 3 %) make
 a tone; tones shorter than 0.15 s are dropped. The test tones are pure (square waves from the
-SB16 and the PC speaker, sines from the OPL2 and the Linux guest) and played one after the other, so
-zero crossings are enough and no FFT is needed.
+SB16, the PC speaker and the CS4231A, sines from the OPL2, the GUS and the Linux guest) and played
+one after the other, so zero crossings are enough and no FFT is needed. The channels are mixed to
+mono, or `channel` (`--channel left|right`) analyses one of them alone: the GUS and CS4231A tests
+play a different tone on each channel at the same time. `durations` (`--duration MIN MAX`) also
+wants each expected tone to last MIN to MAX seconds.
 
 QEMU 11's wav backend leaves the RIFF and data sizes in the header at 0, whether the guest powers
 off or QEMU gets `quit`, SIGTERM or SIGKILL (upstream/qemu-audio-wav-header-sizes.md): the reader
@@ -161,9 +165,21 @@ def window_freq(w, rate):
     return (len(crossings) - 1) / 2 / ((crossings[-1] - crossings[0]) / rate)
 
 
-def analyse(path):
+CHANNELS = {"left": 0, "right": 1}
+
+
+def analyse(path, channel=None):
+    """Levels and tones of a recording: its channels mixed, or only `channel` (an index, or "left"
+    / "right")."""
     header = {}
-    rate, ch, s = read_wav(path, header)
+    if channel is None:
+        rate, ch, s = read_wav(path, header)
+    else:
+        idx = CHANNELS.get(channel, channel)
+        rate, ch, chans = read_channels(path, header)
+        if not isinstance(idx, int) or not 0 <= idx < ch:
+            raise ValueError(f"{path}: no channel {channel} in {ch} channel(s)")
+        s = chans[idx]
     wn = max(64, int(rate * WINDOW_S))
     windows = []
     for a in range(0, len(s) - wn + 1, wn):
@@ -193,18 +209,26 @@ def analyse(path):
                     "freq_hz": round(fs[len(fs) // 2], 1),
                     "rms_dbfs": round(dbfs(math.sqrt(sum(r * r for r in tn["rms"]) / len(tn["rms"]))), 1)})
     loud = [w for w in windows if dbfs(w[1]) > LOUD_DBFS]
-    return {"file": path, "rate": rate, "channels": ch, "seconds": round(len(s) / rate, 3) if rate else 0,
-            "rms_dbfs": round(dbfs(total_rms), 1), "loud_s": round(len(loud) * wn / rate, 3), "tones": out,
-            "header": header}
+    r = {"file": path, "rate": rate, "channels": ch, "seconds": round(len(s) / rate, 3) if rate else 0,
+         "rms_dbfs": round(dbfs(total_rms), 1), "loud_s": round(len(loud) * wn / rate, 3), "tones": out,
+         "header": header}
+    if channel is not None:
+        r["channel"] = channel
+    return r
 
 
-def check(result, expect=(), absent=(), tol=0.04):
-    """(ok, reasons): every expected frequency is one of the tones (within tol), no absent one is."""
+def check(result, expect=(), absent=(), tol=0.04, durations=None):
+    """(ok, reasons): every expected frequency is one of the tones (within tol), no absent one is;
+    with durations=(min, max) the longest tone at each expected frequency lasts min to max seconds."""
     found = [t["freq_hz"] for t in result["tones"]]
     reasons = []
     for f in expect:
         if not any(abs(x - f) <= tol * f for x in found):
             reasons.append(f"no {f:g} Hz tone")
+        elif durations:
+            d = max(t["duration_s"] for t in result["tones"] if abs(t["freq_hz"] - f) <= tol * f)
+            if not durations[0] <= d <= durations[1]:
+                reasons.append(f"{f:g} Hz tone {d:g} s long, not {durations[0]:g} to {durations[1]:g} s")
     for f in absent:
         if any(abs(x - f) <= tol * f for x in found):
             reasons.append(f"unexpected {f:g} Hz tone")
@@ -397,6 +421,9 @@ def main(argv=None):
     p.add_argument("wav")
     p.add_argument("--expect", type=float, action="append", default=[], help="a tone that must be there (Hz)")
     p.add_argument("--absent", type=float, action="append", default=[], help="a tone that must not be (Hz)")
+    p.add_argument("--channel", choices=sorted(CHANNELS), help="analyse this channel alone, not the mix")
+    p.add_argument("--duration", type=float, nargs=2, metavar=("MIN", "MAX"),
+                   help="each expected tone must last MIN to MAX seconds")
     p.add_argument("--signature", type=int, nargs="?", const=1, metavar="N",
                    help="check for N copies of the audio signature (default 1) instead of tones")
     a = p.parse_args(argv)
@@ -404,8 +431,8 @@ def main(argv=None):
         r = signatures(a.wav, a.signature)
         print(json.dumps(r, indent=2))
         return 0 if r["ok"] else 1
-    r = analyse(a.wav)
-    ok, reasons = check(r, a.expect, a.absent)
+    r = analyse(a.wav, a.channel)
+    ok, reasons = check(r, a.expect, a.absent, durations=a.duration)
     r["ok"], r["reasons"] = ok, reasons
     print(json.dumps(r, indent=2))
     return 0 if ok else 1

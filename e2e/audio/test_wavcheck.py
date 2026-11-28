@@ -154,6 +154,29 @@ class WavCheck(unittest.TestCase):
         self.assertEqual(r["channels"], 1)
         self.assertAlmostEqual(r["tones"][0]["freq_hz"], 660, delta=6)
 
+    def test_one_channel(self):
+        # a different tone on each channel at once (the GUS and CS4231A tests): each channel alone
+        p = os.path.join(self.dir, "lr.wav")
+        left, right = tone(551.25, 1.2), tone(1102.5, 1.2, square=True)
+        write_stereo(p, [(int(a * 32767), int(b * 32767)) for a, b in zip(left, right)], RATE)
+        lt, rt = wavcheck.analyse(p, "left"), wavcheck.analyse(p, 1)
+        self.assertEqual(lt["channel"], "left")
+        self.assertEqual([round(t["freq_hz"]) for t in lt["tones"]], [551])
+        self.assertEqual([round(t["freq_hz"]) for t in rt["tones"]], [1102])
+        self.assertTrue(wavcheck.check(lt, expect=[551.25], absent=[1102.5], durations=(0.9, 1.6))[0])
+        self.assertEqual(wavcheck.check(rt, expect=[551.25], absent=[1102.5])[1],
+                         ["no 551.25 Hz tone", "unexpected 1102.5 Hz tone"])
+        with self.assertRaises(ValueError):
+            wavcheck.analyse(p, 2)
+
+    def test_duration(self):
+        r = self.wav(silence(0.2) + tone(800, 0.5, square=True) + silence(0.2))
+        self.assertTrue(wavcheck.check(r, expect=[800], durations=(0.4, 0.6))[0])
+        ok, reasons = wavcheck.check(r, expect=[800], durations=(0.9, 1.6))
+        self.assertFalse(ok)
+        self.assertEqual(len(reasons), 1)
+        self.assertRegex(reasons[0], r"^800 Hz tone 0\.[45]\d* s long, not 0\.9 to 1\.6 s$")
+
 
 # --- the audio signature ---------------------------------------------------------------------------
 
