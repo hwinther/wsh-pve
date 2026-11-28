@@ -45,7 +45,7 @@ In QEMU but not offered by qemu-server (would need `args:`):
 | `ES1370` (PCI) | Linux `snd-ens1370` | plays | The mixer isn't muted at start. Windows 9x/2000 drivers exist (Ensoniq AudioPCI). |
 | `virtio-sound-pci` | Linux `virtio_snd` (5.13+) | plays | Modern Linux only. |
 | `usb-audio` (with `qemu-xhci`) | Linux `snd-usb-audio` | plays | Needs a USB controller. |
-| `gus` (ISA, Gravis Ultrasound GF1) | DOS: own program, GF1 reset, a waveform written into DRAM through the DRAM I/O port, two looping voices panned hard left and right | plays, **left and right swapped** | Port 240h, IRQ 7, DMA 3: IRQ 7 is LPT1's when the VM has a parallel port. Frequency control, loop points, volume and pan work as on a GF1 with 14 voices (44.1 kHz). QEMU's mixer (GUSemu) writes each frame right channel first and QEMU's audio frames are left first, so pan 0 (left) is heard on the right. The GUS's output runs all the time, so with `wav` the file grows while the VM runs, not only while it plays (silence when no voice is on). |
+| `gus` (ISA, Gravis Ultrasound GF1) | DOS: own program, GF1 reset, a waveform written into DRAM through the DRAM I/O port, two looping voices panned hard left and right | plays; left and right swapped without pve-qemu `wsh/0192` (not in a published package yet) | Port 240h, IRQ 7, DMA 3: IRQ 7 is LPT1's when the VM has a parallel port. Frequency control, loop points, volume and pan work as on a GF1 with 14 voices (44.1 kHz). QEMU's mixer (GUSemu) wrote each frame right channel first while QEMU's audio frames are left first, so pan 0 (left) was heard on the right; `wsh/0192` puts the left channel first (the bug is also in QEMU master: `upstream/qemu-gus-stereo-order.md`). The GUS's output runs all the time, so with `wav` the file grows while the VM runs, not only while it plays (silence when no voice is on). |
 | `cs4231a` (ISA, Windows Sound System) | DOS: own program, mode change to 16-bit stereo at 16000 Hz, auto-init DMA on channel 3 | plays | Port 534h (the codec; QEMU has no WSS configuration register at 530h), IRQ 9, DMA 3: IRQ 9 is also `ne2k_isa`'s default, and DMA 3 is the GUS's. DMA playback only: PIO playback (I9 PPIO) and capture aren't emulated, nor are the timer, ADPCM and the output attenuation and mute (I6/I7). Formats: 8-bit unsigned, µ-law, A-law, 16-bit little-endian and (MODE2) big-endian, at the codec's rates, except (read from QEMU's source, not tested) that crystal 1's rate 7 plays at 9000 Hz instead of 9600 and its reserved rates 4 and 5 are refused. |
 | `hda-output` | - | not tested | An output-only HDA codec. |
 
@@ -161,8 +161,10 @@ Alternatively you can use the tcp, tcp4 or tcp6 protocol prefixes to connect to 
   above -50 dBFS, at least 0.15 s) and no tone of a device that isn't attached, so
   `sb16-adlib-pcspk` must give all three and `sb16` only the 1000 Hz one. The GUS and CS4231A
   recordings are checked one channel at a time: each channel must hold its own tone for 0.9 to 1.6 s
-  (AUDTEST plays 1.2 s) and none of the other tones. The GUS case passes with the channels swapped
-  (see the table) and says so in the summary; when QEMU fixes the order it says that instead.
+  (AUDTEST plays 1.2 s) and none of the other tones. For the GUS the matrix first asks the QEMU
+  under test which order it mixes in, without a guest (one voice panned hard left, driven through
+  the qtest protocol into a wav file), and expects that order: as programmed with `wsh/0192`,
+  swapped without it (see the table), and the summary says which.
 - **Through Proxmox VE** (the e2e node in a container): a VM per `audio0` value with
   `driver=wav`. `qm showcmd` must have the expected `-device`/`-machine` arguments and the `wav`
   audiodev with the fixed path, and a real `qm start` must run the guest to its power off with the

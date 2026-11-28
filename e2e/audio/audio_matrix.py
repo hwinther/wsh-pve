@@ -23,9 +23,11 @@ Guests (built by build-guests.sh, nothing installed):
          the tones of the devices it attaches and the absence of the others, so a combination shows
          which device made which sound. The GUS and CS4231A cases ("stereo") check each channel
          alone: its own tone, lasting about as long as AUDTEST plays it, and none of the others.
-         QEMU's GUS puts left on the right channel and right on the left (its mixer writes each
-         frame right first, QEMU's audio frames are left first): the case ("swapped") passes with
-         the channels swapped and says so, and says so too when they come out as programmed.
+         QEMU's GUS put left on the right channel and right on the left until pve-qemu-kvm's
+         wsh/0192 (its mixer wrote each frame right first, QEMU's audio frames are left first).
+         Which order the QEMU under test has is probed without a guest (gus_order(): one voice
+         panned hard left, driven through the qtest protocol into a wav file), and the GUS case
+         expects that order: as programmed with the fix, swapped (with a note) without it.
   linux  Debian's kernel with an initramfs that loads one driver and plays a 660 Hz tone with aplay,
          then powers off; the console (ttyS0, a -serial file) says whether ALSA found the card.
 
@@ -61,6 +63,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import zipfile
 
@@ -105,7 +108,7 @@ CASES = [
      "machine_props": "pcspk-audiodev={a}",
      "args": ["-device", "sb16,audiodev={a}", "-device", "adlib,audiodev={a}"], "expect": DOS_TONES},
     {"id": "dos-gus", "guest": "dos", "device": "gus", "args": ["-device", "gus,audiodev={a}"],
-     "expect": [GUS_L, GUS_R], "stereo": {"left": [GUS_L], "right": [GUS_R]}, "swapped": True},
+     "expect": [GUS_L, GUS_R], "stereo": {"left": [GUS_L], "right": [GUS_R]}, "order": "gus"},
     {"id": "dos-cs4231a", "guest": "dos", "device": "cs4231a", "args": ["-device", "cs4231a,audiodev={a}"],
      "expect": [CS_L, CS_R], "stereo": {"left": [CS_L], "right": [CS_R]}},
     {"id": "linux-ac97", "guest": "linux", "device": "AC97", "mods": "snd-intel8x0",
@@ -197,6 +200,64 @@ def kvm_usable():
     return os.path.exists("/dev/kvm") and os.access("/dev/kvm", os.R_OK | os.W_OK)
 
 
+# QEMU's GUS mixed each frame right channel first until pve-qemu-kvm's wsh/0192, so a voice panned
+# left was heard on the right. The GUS case expects the order of the QEMU under test, probed without
+# a guest: the GF1 programmed through the qtest protocol (the port writes of wsh/0193's gus-test:
+# reset and run, 14 voices, a constant level in DRAM, voice 0 looping at full volume, pan 0), 300 ms
+# of virtual time into a wav file. Once every package the matrix runs has wsh/0192, the probe and
+# the swapped expectation go (ROADMAP).
+GUS_PROBE_PORTS = (
+    [(0x343, 0x4C), (0x345, 0x00), (0x343, 0x4C), (0x345, 0x03), (0x343, 0x0E), (0x345, 0xCD)]
+    + [w for a in range(17) for w in ((0x343, 0x43), (0x344, a), (0x345, 0), (0x343, 0x44), (0x345, 0),
+                                      (0x347, 0x40))]
+    + [(0x342, 0)]
+    + [w for reg, val in ((0x02, 0), (0x03, 0), (0x04, 0), (0x05, 16 << 9), (0x0A, 0), (0x0B, 0),
+                          (0x01, 1024), (0x09, 0xF000))
+       for w in ((0x343, reg), (0x344, val & 0xFF), (0x345, val >> 8))]
+    + [(0x343, 0x0D), (0x345, 0x03), (0x343, 0x0C), (0x345, 0x00), (0x343, 0x00), (0x345, 0x08)])
+_gus_order = None
+
+
+def gus_order():
+    """Where the installed QEMU's GUS puts a voice panned hard left: {"pan0": "left"} (as on a GF1:
+    wsh/0192), {"pan0": "right"} (swapped: QEMU without it) or {"pan0": None, "error": ...}.
+    Probed once per run."""
+    global _gus_order
+    if _gus_order is not None:
+        return _gus_order
+    res = {"pan0": None}
+    with tempfile.TemporaryDirectory() as tmp:
+        wav = os.path.join(tmp, "gus-probe.wav")
+        argv = [QEMU, "-machine", "pc,accel=qtest", "-nodefaults", "-display", "none", "-qtest", "stdio",
+                "-device", "gus,audiodev=a0", "-audiodev", f"wav,id=a0,path={wav}"]
+        try:
+            p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 text=True)
+            try:
+                for c in ([f"outb {port:#x} {val:#x}" for port, val in GUS_PROBE_PORTS]
+                          + ["clock_step 10000000"] * 30):
+                    p.stdin.write(c + "\n")
+                    p.stdin.flush()
+                    reply = p.stdout.readline()
+                    if not reply.startswith("OK"):
+                        raise RuntimeError(f"qtest {c!r}: {reply.strip() or 'no reply'}")
+            finally:
+                p.terminate()
+                err = p.communicate(timeout=20)[1]
+            _, ch, chans = wavcheck.read_channels(wav)
+            left = sum(1 for l, r in zip(*chans) if l and not r)
+            right = sum(1 for l, r in zip(*chans) if r and not l)
+            res.update({"frames_left_only": left, "frames_right_only": right})
+            if ch != 2 or (left > 0) == (right > 0):
+                res["error"] = f"{ch} channels, {left} frames left only, {right} right only; {err.strip()[:200]}"
+            else:
+                res["pan0"] = "left" if left else "right"
+        except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as e:
+            res["error"] = str(e)[:300]
+    _gus_order = res
+    return res
+
+
 # ---------------------------------------------------------------------------------------------
 # inventory
 
@@ -210,6 +271,8 @@ def inventory():
         m = re.match(r'name "([^"]+)", bus ([^,]+)(?:, alias "([^"]+)")?(?:, desc "([^"]*)")?', line.strip())
         if m:
             inv["qemu_sound_devices"].append({"name": m[1], "bus": m[2], "alias": m[3], "desc": m[4]})
+    if any(d["name"] == "gus" for d in inv["qemu_sound_devices"]):
+        inv["gus_order"] = gus_order()
     out = sh(QEMU, "-audiodev", "help")
     inv["audiodev_drivers"] = [x.strip() for x in out.splitlines()[1:] if x.strip()]
     # pcspk-audiodev is an alias property that `-machine pc,help` doesn't list: start frozen with it
@@ -376,21 +439,32 @@ def stereo_check(want, chans):
 
 
 def judge_stereo(case, wav):
-    """A "stereo" case: (ok, reasons, the tones found by channel). With "swapped" (QEMU's GUS) the
-    channels may also come out swapped, which passes with a note; as programmed passes too, with a
-    note that the swap is gone."""
+    """A "stereo" case: (ok, reasons, the tones found by channel). With "order": "gus" the channels
+    must come out in the order gus_order() found in the installed QEMU: as programmed with
+    pve-qemu-kvm's wsh/0192, swapped (with a note) without it. When the probe fails, either order
+    passes, with a note."""
     chans = {c: wavcheck.analyse(wav, c) for c in case["stereo"]}
     found = {c: [t["freq_hz"] for t in a["tones"]] for c, a in chans.items()}
-    ok, reasons = stereo_check(case["stereo"], chans)
-    if not case.get("swapped"):
-        return ok, reasons, found
+    if case.get("order") != "gus":
+        return (*stereo_check(case["stereo"], chans), found)
     l, r = case["stereo"]["left"], case["stereo"]["right"]
-    s_ok, _ = stereo_check({"left": r, "right": l}, chans)
+    swapped = {"left": r, "right": l}
+    order = gus_order()
+    if order["pan0"] == "left":
+        ok, reasons = stereo_check(case["stereo"], chans)
+        return ok, reasons + ["left and right as programmed (the installed QEMU's gus has wsh/0192)"], found
+    if order["pan0"] == "right":
+        ok, reasons = stereo_check(swapped, chans)
+        return ok, reasons + ["left and right swapped, as the installed QEMU's gus mixes them "
+                              "(right first; fixed by pve-qemu-kvm wsh/0192)"], found
+    ok, reasons = stereo_check(case["stereo"], chans)
+    s_ok, _ = stereo_check(swapped, chans)
+    note = f"gus order probe failed ({order.get('error')})"
     if s_ok:
-        return True, ["left and right swapped (QEMU's gus, known)"], found
+        return True, [f"left and right swapped; {note}"], found
     if ok:
-        return True, ["left and right as programmed: QEMU's gus no longer swaps them, update the docs"], found
-    return False, reasons, found
+        return True, [f"left and right as programmed; {note}"], found
+    return False, reasons + [note], found
 
 
 # ---------------------------------------------------------------------------------------------
