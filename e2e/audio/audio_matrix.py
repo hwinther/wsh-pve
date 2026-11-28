@@ -17,9 +17,15 @@ Runs inside the image of e2e/audio/Dockerfile (the e2e PVE node plus the guests)
 
 Guests (built by build-guests.sh, nothing installed):
   dos    FreeDOS 1.4's boot floppy with its FDCONFIG.SYS replaced so it runs AUDIO.BAT, which runs
-         AUDTEST.COM (audtest.asm): SB16 PCM 1000 Hz, OPL2 440 Hz, PC speaker 750 Hz, one after the
-         other, then ACPI power off. Each case expects the tones of the devices it attaches and the
-         absence of the others, so a combination shows which device made which sound.
+         AUDTEST.COM (audtest.asm): SB16 PCM 1000 Hz, OPL2 440 Hz, PC speaker 750 Hz, then the GUS
+         (551.25 Hz left, 1102.5 Hz right) and the CS4231A (800 Hz left, 1600 Hz right), one after
+         the other (a device that isn't there is skipped), then ACPI power off. Each case expects
+         the tones of the devices it attaches and the absence of the others, so a combination shows
+         which device made which sound. The GUS and CS4231A cases ("stereo") check each channel
+         alone: its own tone, lasting about as long as AUDTEST plays it, and none of the others.
+         QEMU's GUS puts left on the right channel and right on the left (its mixer writes each
+         frame right first, QEMU's audio frames are left first): the case ("swapped") passes with
+         the channels swapped and says so, and says so too when they come out as programmed.
   linux  Debian's kernel with an initramfs that loads one driver and plays a 660 Hz tone with aplay,
          then powers off; the console (ttyS0, a -serial file) says whether ALSA found the card.
 
@@ -76,6 +82,13 @@ FREEDOS_BOOT = targets_dos.MEDIA["freedos14-boot.img"]
 # What AUDTEST plays (audtest.asm) and what the Linux guest plays (build-guests.sh)
 SB16, OPL, SPK, LINUX = 1000, 440, 750, 660
 DOS_TONES = [SB16, OPL, SPK]
+# GUS: one 40-sample sine period in DRAM, voice 0 (left) at half a sample per 44.1 kHz frame,
+# voice 1 (right) at one; CS4231A: 16000 Hz square waves of 20 and 10 frames
+GUS_L, GUS_R = 44100 / 80, 44100 / 40
+CS_L, CS_R = 800, 1600
+DOS_ALL = DOS_TONES + [GUS_L, GUS_R, CS_L, CS_R]
+# how long a stereo case's tone must last: AUDTEST plays each for 22 BIOS ticks (1.21 s)
+STEREO_TONE_S = (0.9, 1.6)
 
 HDA_MODS = "snd-hda-codec-generic,snd-hda-intel"
 
@@ -91,6 +104,10 @@ CASES = [
     {"id": "dos-sb16-adlib-pcspk", "guest": "dos", "device": "sb16+adlib+pcspk",
      "machine_props": "pcspk-audiodev={a}",
      "args": ["-device", "sb16,audiodev={a}", "-device", "adlib,audiodev={a}"], "expect": DOS_TONES},
+    {"id": "dos-gus", "guest": "dos", "device": "gus", "args": ["-device", "gus,audiodev={a}"],
+     "expect": [GUS_L, GUS_R], "stereo": {"left": [GUS_L], "right": [GUS_R]}, "swapped": True},
+    {"id": "dos-cs4231a", "guest": "dos", "device": "cs4231a", "args": ["-device", "cs4231a,audiodev={a}"],
+     "expect": [CS_L, CS_R], "stereo": {"left": [CS_L], "right": [CS_R]}},
     {"id": "linux-ac97", "guest": "linux", "device": "AC97", "mods": "snd-intel8x0",
      "args": ["-device", "AC97,audiodev={a}"], "expect": [LINUX]},
     {"id": "linux-es1370", "guest": "linux", "device": "ES1370", "mods": "snd-ens1370",
@@ -154,7 +171,7 @@ END_CASES = [
 PVE_WAV_STOP = "pve-wav-qm-stop"
 
 FDCONFIG = "SWITCHES=/N /F\r\nLASTDRIVE=Z\r\nFILES=20\r\nSHELL=\\FREEDOS\\BIN\\COMMAND.COM \\FREEDOS\\BIN /E:1024 /P=\\AUDIO.BAT\r\n"
-AUDIO_BAT = "@ECHO OFF\r\nSET BLASTER=A220 I5 D1 H5 T6\r\nAUDTEST SAP\r\n"
+AUDIO_BAT = "@ECHO OFF\r\nSET BLASTER=A220 I5 D1 H5 T6\r\nAUDTEST SAPGC\r\n"
 
 
 def log(*a):
@@ -243,7 +260,7 @@ def freedos_boot_floppy():
 
 
 def make_dos_floppy(path):
-    """The FreeDOS boot floppy that runs AUDTEST SAP instead of the installer."""
+    """The FreeDOS boot floppy that runs AUDTEST SAPGC instead of the installer."""
     shutil.copyfile(freedos_boot_floppy(), path)
     env = dict(os.environ, MTOOLS_SKIP_CHECK="1")
     tmp = os.path.dirname(path)
@@ -307,10 +324,13 @@ def read_text(path):
 def judge(case, wav, serial, run):
     """The verdict of one run: the tones in the wav file and the guest's own report."""
     res = {"run": run, "notes": []}
-    absent = [t for t in (DOS_TONES if case["guest"] == "dos" else [LINUX]) if t not in case["expect"]]
+    absent = [t for t in (DOS_ALL if case["guest"] == "dos" else [LINUX]) if t not in case["expect"]]
     try:
         a = wavcheck.analyse(wav)
-        ok, reasons = wavcheck.check(a, case["expect"], absent)
+        if case.get("stereo"):
+            ok, reasons, res["tones_by_channel"] = judge_stereo(case, wav)
+        else:
+            ok, reasons = wavcheck.check(a, case["expect"], absent)
     except (OSError, ValueError) as e:
         a, ok, reasons = None, False, [f"no wav: {e}"]
     res["wav"] = a
@@ -331,7 +351,8 @@ def judge(case, wav, serial, run):
             res["notes"].append(f"guest: {m.group(0) if m else 'no AUDIOTEST line'}")
         res["notes"] += [n.group(1) for n in re.finditer(r"AUDIOTEST note: (.*)", text)]
     else:
-        res["guest_report"] = "; ".join(l.strip() for l in text.splitlines() if l.startswith(("SB16", "OPL2", "PC speaker", "AUDTEST"))) or None
+        res["guest_report"] = "; ".join(l.strip() for l in text.splitlines()
+                                        if l.startswith(("SB16", "OPL2", "PC speaker", "GUS", "CS4231A", "AUDTEST"))) or None
         if "AUDTEST: done" not in text:
             res["notes"].append("guest: AUDTEST did not finish")
             ok = False
@@ -339,6 +360,37 @@ def judge(case, wav, serial, run):
         res["notes"].append(f"no power off within {run['seconds']} s")
     res["ok"] = ok
     return res
+
+
+def stereo_check(want, chans):
+    """(ok, reasons): each channel of `want` ({"left": [Hz], ...}) analysed alone (chans: the
+    analyses by channel) has its own tones, about as long as AUDTEST plays them, and no other
+    DOS tone."""
+    ok, reasons = True, []
+    for chan, tones in want.items():
+        c_ok, c_reasons = wavcheck.check(chans[chan], tones, [t for t in DOS_ALL if t not in tones],
+                                         durations=STEREO_TONE_S)
+        ok = ok and c_ok
+        reasons += [f"{chan}: {r}" for r in c_reasons]
+    return ok, reasons
+
+
+def judge_stereo(case, wav):
+    """A "stereo" case: (ok, reasons, the tones found by channel). With "swapped" (QEMU's GUS) the
+    channels may also come out swapped, which passes with a note; as programmed passes too, with a
+    note that the swap is gone."""
+    chans = {c: wavcheck.analyse(wav, c) for c in case["stereo"]}
+    found = {c: [t["freq_hz"] for t in a["tones"]] for c, a in chans.items()}
+    ok, reasons = stereo_check(case["stereo"], chans)
+    if not case.get("swapped"):
+        return ok, reasons, found
+    l, r = case["stereo"]["left"], case["stereo"]["right"]
+    s_ok, _ = stereo_check({"left": r, "right": l}, chans)
+    if s_ok:
+        return True, ["left and right swapped (QEMU's gus, known)"], found
+    if ok:
+        return True, ["left and right as programmed: QEMU's gus no longer swaps them, update the docs"], found
+    return False, reasons, found
 
 
 # ---------------------------------------------------------------------------------------------
@@ -675,6 +727,8 @@ def run_pve_wav_stop(out):
 # summary
 
 def fmt_tones(r):
+    if r.get("tones_by_channel"):
+        return "; ".join(f"{c} {', '.join(f'{t:g}' for t in ts) or '-'}" for c, ts in r["tones_by_channel"].items())
     return ", ".join(f"{t:g}" for t in r.get("tones_found") or []) or "-"
 
 
