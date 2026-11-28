@@ -541,6 +541,74 @@ their results are in the DOS guide ("Memory profiles").
 | `tests/test_dos_profiles.py` (19 tests; the guest part on a copy of the stored FreeDOS disk, two other guests running) | 19 passed | 73 s |
 | `VGAAR.COM` under pve-qemu-kvm 11.1.3-2+wsh16 (without `wsh/0051`) | `2000 FAIL`, screen lit | 7 s |
 
+### ReactOS
+
+`reactos0416` (ReactOS 0.4.16, GPL) is in `targets_dos.py` with the other x86 targets. The user
+guide is `docs/src/content/docs/guides/reactos.md` (the VM, the install by hand and with the lab,
+what works).
+
+- **Profile** (`targets_dos.X86_REACTOS`): `ostype: wxp` with `tdf: 0` (without it qemu-server adds `-rtc driftfix=slew`, and the setup hung
+  under TCG in the HAL before its first screen), `machine: pc`, `cpu: qemu64`, `kvm: 0`,
+  1024 MB, `balloon: 0` (no virtio driver: an unknown device opens the New Hardware Wizard),
+  `tablet: 0`, `vga: std`, `rtl8139`, `serial0: socket`, a 4 GiB IDE disk, the CD on `ide2`, `boot:
+  order=ide0;ide2` (the blank disk falls through to the CD; after the text-mode setup the disk boots).
+- **Medium:** ReactOS's own unattended setup reads `i386/unattend.inf` from the boot CD. The release
+  CD has one with `UnattendSetupEnabled = no`. `answer_media.iso_replace` replaces that file in the
+  sectors it already has and its size in every directory record (the ISO 9660 and ISO 9660:1999
+  trees; it refuses a CD with UDF), and changes nothing else; `answer_media.reactos_unattend` is the
+  answer file. `lab.py media reactos0416 --convert ReactOS-0.4.16-i386.iso` (`install.convert_iso_edit`,
+  `targets.ISO_EDITS`) writes `reactos0416-wshlab.iso` and checks both sha256. The answers are on the
+  CD, so `--root-password`, `--hostname` and `--user` other than the target's are refused (the
+  target's `fixed`).
+- **The screen and the console:** the CD's FreeLoader menu and the text-mode setup are VGA text
+  (`vgatext.py`); from the second stage on the screen is graphical. The scenarios read COM1 instead
+  of OCR: during the install ReactOS's debug log (the release is a debug build, and the unattended
+  setup makes the installed system boot "ReactOS (RosDbg)", `/DEBUG /DEBUGPORT=COM1 /KDSERIAL`,
+  `TimeOut=0`: `base/setup/lib/bootsup.c`), afterwards `C:\wshlab.cmd`, which the first boot puts into
+  the Run key and which sends `ver`, `hostname`, the boot loader's default, the marker and
+  `ipconfig` to COM1 at each logon.
+- **Keys** go through QMP `send-key` into the Run dialog (Win+R) and `cmd.exe`, 60 ms held and
+  120 ms apart, and only once the guest is idle (`_reactos.settle`: QEMU below 30% of a core in a
+  row of 5 s samples). Typed at once after the first logon, while ReactOS installed devices and
+  opened the New Hardware Wizard, keys got lost (shift among them: `verC!` for `ver>COM1`). Files are
+  written with `>>FILE echo line` (redirection first: a line that ends in a digit would otherwise be
+  a handle number) and read back on COM1, and written again when they differ.
+- **Phases:** `reactos-install.py` picks "ReactOS Setup (Text Mode)" in the CD's menu (the default
+  starts the Live environment after 3 s), records the text-mode setup, follows the second stage on
+  COM1, answers the kernel debugger when an assertion stops in it (`i` at `(boipt)?`, `cont` at a
+  bare `kdb:>`; `!Vacb->Dirty` in `ntoskrnl/cc/view.c` stopped the second stage in 1 of 4 installs,
+  the first, before the scenario answered; no later run hit one, so the answer is untested), waits for
+  explorer's desktop on the third boot, types `_reactos.FREELDR_FIX` (default "ReactOS" without the
+  debugger, `TimeOut=3`) and reboots; a boot that prints the debugger's command line again means a
+  lost key, and the fix is typed again (3 tries). It powers off from the desktop of the boot without
+  the debugger. `reactos-firstboot.py` writes `C:\wshlab.cmd`, the Run key and the marker
+  `C:\WSHLAB.TXT`, each read back, and runs the report once. `reactos-boot-disk.py` (`--check`,
+  boot tests) waits for the report, checks `VERSION`, `CHECK` and the boot loader's default, a
+  1024x768 desktop screenshot that isn't blank, and with `IDLE_BELOW` (25) the host CPU at the
+  desktop.
+- **Tests:** `tests/test_reactos.py`: the answer file, `iso_replace` on a CD made by `answer_media.iso9660`
+  (only the file's sectors and its directory record change), the target and the conversion's
+  refusals; with `WSH_LAB_GUEST_TESTS=1 REACTOS_ISO=<the release CD or the converted one>` the three
+  scenarios under the lab's own QEMU. No CI job: the CD isn't in the Actions cache.
+
+Tested on the lab host, 2026-11-27, with the published packages (pve-qemu-kvm 11.1.3-4+wsh37,
+qemu-server 9.2.24+wsh5, pve-manager 9.3.1+wsh1), TCG, one guest at a time:
+
+| Run | Result | Time |
+| --- | --- | --- |
+| `install reactos0416 --vmid 9601 --check` in the PVE test container (`pve.Dockerfile`) | passed: the boot loader's default typed once (no lost key), the marker read back whole, report with `DefaultOS=ReactOS` and the marker, 1024x768 desktop, idle 6.1% of a core; `boot: order=ide0`, `ide2: none` | 16.4 min (install 580 s: text-mode setup 123 s, graphical setup 121 s; first boot 279 s; check 93 s) |
+| the same before `tdf: 0` | the setup hung in the HAL before its first screen (`-rtc driftfix=slew`, see the profile above); stopped by hand | |
+| `tests/test_reactos.py` guest test (the lab's own QEMU, the lab image of the same day) | install and first boot passed; the check failed on `VERSION` (`ver` in a batch file prints `Version 0.4.16-x86 ...`, not `ReactOS [Version`); `reactos-boot-disk.py` with the fixed regex on the same disk passed, idle 3.8% | install 502 s, first boot 195 s, check 79 s |
+| the first try of the scenarios (keys typed right after the first logon, without `settle`) | the report script came out garbled (`verC!`): the reason for `settle` and read-back | |
+| unit tests (`test_reactos.py`, `test_targets.py`, `test_dos.py`, `test_vgatext.py`, `test_stored_disks.py`, `test_freedos.py`, `test_netbsd.py`, `test_mirror.py`, `test_wisp_vm.py`, `test_dos_profiles.py`) | 288 passed, 10 skipped | 8 s |
+
+By hand on an installed disk under the lab's own QEMU (`lab.py serve`): `rtl8139`, `e1000` and
+`ne2k_pci` took an address from QEMU's user network; `pcnet` had none when the logon report ran
+(not looked into); `cirrus` and `vmware` came up at 800x600 (the answer file's 1024x768 is for the
+VBE driver of `std`); AC97 played; `WSHRACER.EXE -hostgl -check` (built with `make 3dfx-racer`, on a
+CD made by `answer_media.iso9660`) passed its pixel check on ReactOS's software OpenGL and logged to
+COM1 itself.
+
 ### The Solaris 10 install target
 
 `sol10-sun4u` installs Solaris 10 1/13 from its DVD on the sparc64 profile (sun4u, OpenBIOS, a blank
@@ -2238,6 +2306,25 @@ Found on the way:
   writes the same timeouts into `/etc/systemd/system.conf.d/wsh-lab-tcg.conf`, for disks installed from now
   on (the stored disk predates it). Units with their own `TimeoutSec=90s` (`systemd-modules-load`,
   `systemd-journal-flush`) can still fail on a busy host; the boot gets past them.
+- **No backslash in a preseed answer:** the first install with that late command (the regression sweep of
+  2026-11-26) went back to debian-installer's main menu after GRUB instead of rebooting. The late command
+  wrote the drop-in with `printf '[Manager]\nDefault...'`. The early command's `debconf-set-selections`
+  runs under a cdebconf of its own (`preseed_command` starts one), which saves the answers to
+  `questions.dat` escaping only newlines; the installer's main cdebconf loads that file and turns each
+  `\n` into a newline. A debconf reply is one line, so `preseed_command` got the command cut at its first
+  newline (syslog: `running preseed command preseed/late_command: ... printf '[Manager]`, then
+  `log-output: syntax error: unterminated quoted string`), and the rest of the value was left in the reply
+  stream for the next debconf commands to read. None of the late command ran, root's password included;
+  finish-install failed and main-menu showed "Installation step failed". The late command now writes each
+  line of the drop-in with its own `echo`, and `preseed_ports()` refuses a late command with a backslash
+  (`tests/test_targets.py` checks the whole preseed file for one). Tested 2026-11-27 (pve-qemu-kvm
+  11.1.3-4+wsh37, qemu-server 9.2.24+wsh5, pve-manager 9.3.1+wsh1):
+
+  | Run | Result | Time |
+  | --- | --- | --- |
+  | `debian13-install-sparc64.py` with the lab's own QEMU, the old late command | "Installation step failed" after GRUB, as in the sweep | 148 min |
+  | the netinst booted with the answer CD, `preseed_command preseed/late_command` in the installer's shell, old and new late command | old: cut at `printf '[Manager]`, `syntax error: unterminated quoted string`; new: whole, no error | 4 min each |
+  | `install debian13-sun4u --vmid 9913 --check --gateway 10.0.2.2 --dns <a resolver>` (the PVE test container, `vmbr0` NATed out by hand) | passed; the installed disk has `/etc/systemd/system.conf.d/wsh-lab-tcg.conf` with both timeouts | 177.9 min (install 9972 s, first boot 359 s, check 328 s) |
 
 **In the matrix:** `matrix_skip` like Tribblix: neither the weekly install matrix (240 minutes) nor the
 monthly `--reinstall all` (720 minutes) installs it; it is installed on request (`pve_matrix.py install

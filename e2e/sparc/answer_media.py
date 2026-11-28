@@ -1,15 +1,19 @@
 """Answer media: a small CD image made on the node from a target's answers (never from vendor files),
 which the installer reads its answer file from (README.md, "Install methods", unattended). And one
 CD that does hold vendor files, OpenBSD 5.9's sets (openbsd_sets: made with `lab.py media --convert`
-from the release's files, each checked against its sha256 first).
+from the release's files, each checked against its sha256 first). And the ReactOS CD with the
+lab's answer file put in place of the release's (iso_replace, reactos_unattend; README.md, "ReactOS").
 
     iso9660({"KS.CFG": b"..."}, "WSH_LAB_KS")   -> the bytes of a one-directory ISO 9660 image
     kickstart(ip=..., netmask=...)                -> Red Hat 6.2's ks.cfg (README.md, "Red Hat Linux 6.2")
     openbsd_sets({"base59.tgz": b"...", ...})    -> OpenBSD's sets on a CD, names in Rock Ridge
+    iso_replace(src, dst, {"/i386/unattend.inf": b"..."})  -> a copy of a CD with small files replaced
+    reactos_unattend()                            -> those edits for the ReactOS CD
 
 Standard library only: the node needs no genisoimage, and tests/test_targets.py reads the image back
 with dos_tools.Iso.
 """
+import os
 import re
 import struct
 
@@ -348,14 +352,14 @@ exit 0
 
 PORTS_MIRROR = ("deb.debian.org", "/debian-ports")  # sparc64 is a port: sid ("unstable") only
 
-# systemd's timeouts in the installed system, a drop-in the late command writes (directory, file,
-# printf text): 90 s for a device to show up and for a unit to start are too short under TCG. On an
-# idle host udev's coldplug alone took about that long; on a busy one /boot's device, ttyS0 and journald
-# timed out and the boot stopped in emergency mode without `login:` (README.md, "Debian 13 on sun4u").
-# The boot scenarios pass the same as kernel options for disks installed before
-# (_debian13.SLOW_BOOT_OPTIONS)
+# systemd's timeouts in the installed system, a drop-in the late command writes (directory, file, its
+# lines): 90 s for a device to show up and for a unit to start are too short under TCG. On an idle host
+# udev's coldplug alone took about that long; on a busy one /boot's device, ttyS0 and journald timed out
+# and the boot stopped in emergency mode without `login:` (README.md, "Debian 13 on sun4u"). The boot
+# scenarios pass the same as kernel options for disks installed before (_debian13.SLOW_BOOT_OPTIONS).
+# Each line gets an `echo` of its own in the late command: no backslash (preseed_ports())
 PORTS_SYSTEMD_TIMEOUTS = ("/etc/systemd/system.conf.d", "wsh-lab-tcg.conf",
-                          r"[Manager]\nDefaultTimeoutStartSec=600s\nDefaultDeviceTimeoutSec=600s\n")
+                          ("[Manager]", "DefaultTimeoutStartSec=600s", "DefaultDeviceTimeoutSec=600s"))
 
 
 def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None, proxy=None, timezone="Etc/UTC"):
@@ -373,7 +377,15 @@ def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None,
     sshd doesn't let an empty password in (PermitEmptyPasswords no). The late command also takes a
     `deb cdrom:` line out of sources.list (the netinst writes none when it has a mirror) and, without a
     router or name server, what netcfg wrote for them, and writes systemd's longer timeouts
-    (PORTS_SYSTEMD_TIMEOUTS). No user is made (passwd/make-user false)."""
+    (PORTS_SYSTEMD_TIMEOUTS). No user is made (passwd/make-user false).
+
+    No answer may hold a backslash. The early command's debconf-set-selections runs under a cdebconf
+    of its own, which saves the answers to questions.dat escaping only newlines (as backslash-n); the
+    installer's main cdebconf loads that file and turns every backslash-n into a newline. A late
+    command with printf's backslash-n in it reached preseed_command cut at its first newline (a
+    debconf reply is one line): `sh -c` failed on the open quote, the rest stayed in the reply stream,
+    finish-install failed and debian-installer went back to its main menu instead of rebooting
+    (README.md, "Debian 13 on sun4u")."""
     dns = list(dns or [])
     for what, val in (("ip", ip), ("netmask", netmask), ("gateway", gateway), ("timezone", timezone),
                       *(("dns", d) for d in dns), ("domain", domain), ("hostname", hostname)):
@@ -390,8 +402,12 @@ def preseed_ports(ip, netmask, gateway=None, dns=(), domain=None, hostname=None,
         late += "; in-target sed -i '/^[[:space:]]*gateway /d' /etc/network/interfaces"
     if not dns:
         late += "; in-target sed -i '/^nameserver /d' /etc/resolv.conf"
-    confdir, conf, text = PORTS_SYSTEMD_TIMEOUTS
-    late += f"; mkdir -p /target{confdir}; printf '{text}' > /target{confdir}/{conf}"
+    confdir, conf, conf_lines = PORTS_SYSTEMD_TIMEOUTS
+    late += f"; mkdir -p /target{confdir}"
+    for i, line in enumerate(conf_lines):
+        late += f"; echo '{line}' {'>>' if i else '>'} /target{confdir}/{conf}"
+    if "\\" in late:
+        raise ValueError(f"preseed late command with a backslash, which cdebconf can turn into a newline: {late!r}")
     return f"""\
 # lab.py install (wsh-pve e2e/sparc answer_media.preseed_ports): Debian 13 (debian-ports), sparc64
 d-i debian-installer/locale string en_US.UTF-8
@@ -532,3 +548,182 @@ popularity-contest popularity-contest/participate boolean false
 d-i finish-install/reboot_in_progress note
 d-i preseed/late_command string {late}
 """
+
+
+# --- ReactOS: the release CD with an answer file ------------------------------------------------------
+
+def _dir_records(data):
+    """(offset, record) of each directory record in a directory's bytes (records don't cross a
+    sector; a zero length byte pads to the next sector)."""
+    off = 0
+    while off < len(data):
+        n = data[off]
+        if n == 0:
+            off = (off // SECTOR + 1) * SECTOR
+            continue
+        yield off, data[off:off + n]
+        off += n
+
+
+def _record_name(rec, joliet):
+    raw = rec[33:33 + rec[32]]
+    name = raw.decode("utf-16-be", "replace") if joliet else raw.decode("latin-1")
+    return name.split(";")[0].rstrip(".").lower()
+
+
+def iso_files(f):
+    """{"/dir/name" (lower case, no version): [(offset of the record's extent field, extent LBA,
+    size), ...]} for every file of every directory tree on an ISO 9660 image (the primary one and
+    each supplementary one: Joliet, ISO 9660:1999), read from the open file `f`."""
+    def read(lba, size):
+        f.seek(lba * SECTOR)
+        return f.read(size)
+
+    files = {}
+    for vd in range(16, 64):
+        desc = read(vd, SECTOR)
+        if desc[1:6] != b"CD001":
+            raise ValueError(f"sector {vd}: not an ISO 9660 volume descriptor")
+        if desc[0] == 255:
+            break
+        if desc[0] not in (1, 2):
+            continue
+        joliet = desc[0] == 2 and desc[88:90] == b"%/"
+        root = desc[156:190]
+        todo = [("", struct.unpack("<I", root[2:6])[0], struct.unpack("<I", root[10:14])[0])]
+        seen = set()
+        while todo:
+            path, lba, size = todo.pop()
+            if lba in seen:
+                continue
+            seen.add(lba)
+            for off, rec in _dir_records(read(lba, size)):
+                if rec[33] in (0, 1) and rec[32] == 1:  # "." and ".."
+                    continue
+                ext, length = struct.unpack("<I", rec[2:6])[0], struct.unpack("<I", rec[10:14])[0]
+                name = f"{path}/{_record_name(rec, joliet)}"
+                if rec[25] & 2:
+                    todo.append((name, ext, length))
+                else:
+                    files.setdefault(name, []).append((lba * SECTOR + off + 2, ext, length))
+    return files
+
+
+def iso_replace(src, dst, replace):
+    """Copy the ISO 9660 image `src` to `dst` with the contents of some files replaced ({path as
+    iso_files names it: bytes}), in place: each new content goes into the sectors the file already
+    has (it may not need more) and its size into every directory record of it (all trees). Nothing
+    else changes: the boot record, the other files and their order stay as they are. Refuses an
+    image with UDF (its own file entries would still have the old size). Returns dst's sha256."""
+    import hashlib
+
+    with open(src, "rb") as f:
+        for vd in range(16, 64):
+            f.seek(vd * SECTOR)
+            if f.read(6)[1:6] in (b"NSR02", b"NSR03"):
+                raise ValueError(f"{src}: has UDF; editing only its ISO 9660 trees would leave UDF stale")
+        files = iso_files(f)
+    edits = {}  # absolute offset -> bytes
+    for path, data in replace.items():
+        recs = files.get(path.lower())
+        if not recs:
+            raise ValueError(f"{path}: not on {src}")
+        lbas = {lba for _, lba, _ in recs}
+        olds = {size for _, _, size in recs}
+        if len(lbas) != 1 or len(olds) != 1:
+            raise ValueError(f"{path}: its directory records disagree ({sorted(lbas)}, {sorted(olds)})")
+        lba, old = lbas.pop(), olds.pop()
+        room = max(1, -(-old // SECTOR)) * SECTOR
+        if len(data) > room:
+            raise ValueError(f"{path}: {len(data)} bytes don't fit the {room} the file has")
+        edits[lba * SECTOR] = data + b"\x00" * (room - len(data))
+        for at, _, _ in recs:
+            edits[at + 8] = _both32(len(data))
+    h = hashlib.sha256()
+    tmp = dst + ".part"
+    try:
+        with open(src, "rb") as f, open(tmp, "wb") as o:
+            pos = 0
+            for at in sorted(edits) + [None]:
+                upto = at if at is not None else None
+                while upto is None or pos < upto:
+                    block = f.read(min(1 << 20, upto - pos) if upto is not None else 1 << 20)
+                    if not block:
+                        break
+                    o.write(block)
+                    h.update(block)
+                    pos += len(block)
+                if at is None:
+                    break
+                o.write(edits[at])
+                h.update(edits[at])
+                f.seek(len(edits[at]), 1)
+                pos += len(edits[at])
+        os.replace(tmp, dst)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+    return h.hexdigest()
+
+
+# ReactOS's own answer file (the release CD's i386/unattend.inf has every key, with
+# UnattendSetupEnabled = no): with "yes" the text-mode setup partitions, formats and copies without a
+# question, and the graphical second stage after the reboot reads the same answers (usetup copies them
+# to $winnt$.inf). INF syntax: ";" starts a comment and "," separates fields, so the commands below
+# have neither; "%" is left out too (INF string substitution). The three commands (early in the second
+# stage, at its end, at the first logon) were meant as progress marks on COM1, but COM1 belongs to the
+# kernel debugger then (the unattended setup's boot entry) and nothing of them arrives; the scenario
+# follows the debug log instead. They stay because the tested CD (its sha256 in targets_dos.py) has
+# them.
+REACTOS_UNATTEND = """\
+; lab.py install (wsh-pve e2e/sparc answer_media.REACTOS_UNATTEND): ReactOS, unattended
+[Unattend]
+Signature = "$ReactOS$"
+UnattendSetupEnabled = yes
+DestinationDiskNumber = 0
+DestinationPartitionNumber = 1
+InstallationDirectory=ReactOS
+BootLoaderLocation=2
+FullName="wsh-lab"
+OrgName="wsh-pve"
+ComputerName="{hostname}"
+AdminPassword="{password}"
+TimeZoneIndex=85
+DisableAutoDaylightTimeSet = 1
+FormatPartition=1
+AutoPartition = 1
+FsType = 0
+RappsDownload = no
+LocaleID = 409
+InstallationType = 1
+
+[GuiUnattended]
+DetachedProgram=cmd.exe
+Arguments="/C echo WSHLAB-STAGE2>COM1"
+
+[SetupParams]
+UserExecute="cmd.exe /C echo WSHLAB-SETUP-DONE>COM1"
+
+[GuiRunOnce]
+cmd.exe /C echo WSHLAB-FIRSTLOGON>COM1
+
+[Display]
+BitsPerPel = {bpp}
+XResolution = {width}
+YResolution = {height}
+VRefresh = 0
+
+[Shell]
+DefaultThemesOff = no
+CustomDefaultThemeFile = "%WINDIR%\\Resources\\Themes\\Lautus\\lautus.msstyles"
+"""
+
+
+def reactos_unattend(hostname="REACTOS", password="wshlab", width=1024, height=768, bpp=32):
+    """The edits that make the ReactOS release CD install by itself (iso_replace): its
+    i386/unattend.inf replaced by REACTOS_UNATTEND, nothing else. CRLF line ends, as the release's."""
+    for what, val in (("hostname", hostname), ("password", password)):
+        if not re.fullmatch(r"[A-Za-z0-9-]{1,15}", val):
+            raise ValueError(f"ReactOS {what} {val!r}: 1-15 of A-Z a-z 0-9 -")
+    text = REACTOS_UNATTEND.format(hostname=hostname, password=password, width=width, height=height, bpp=bpp)
+    return {"/i386/unattend.inf": text.replace("\n", "\r\n").encode("ascii")}
