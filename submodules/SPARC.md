@@ -435,12 +435,13 @@ build date (within two days of the package's `qemu-system-sparc64`; QEMU 11.1.3'
 | `0023-client-call-method-store-the-catch-result-only-when-nret-is-not-0` | Shared client-interface code (built into both images; used by sparc64 clients): `call-method` and `interpret` wrote the catch result to `args[nargs]` even when the client asked for no results (`nret` 0), over whatever followed its argument array. OpenBSD 8.0's installed sun4u kernel calls the MMU's `map` that way with the arguments on its stack, so the store hit its stack-protector canary and the kernel stopped right after the loader (`Unhandled Exception 0x30`, "sparc64"). Now stored only when `nret` > 0; the installed OpenBSD 8.0 boots to `login:` | not fixed |
 | `0024-sparc64-ofmem-list-whole-pages-in-memory-available` | `/memory` `available` is built from the gaps between claimed ranges, which are recorded to the byte (the ELF loader claims the Solaris boot program's segments at 0x100000 with their exact sizes), so its entries could start inside a page (`00181540 3cef2ac0`). Solaris 7/8/9 count such an entry one page short at its top; the top-down allocator later gave a boot allocation exactly that page and the kernel panicked: `boot_alloc: pp is NULL or free` (7: `kmem_getpages: ...`). Entries are now rounded to whole pages (start up, end down) as OBP lists them; the allocator is unchanged ("Solaris 7/8/9: `pp is NULL or free`"). Generic file, `#ifdef CONFIG_SPARC64` | not fixed; see `upstream/openbios-sparc64-memory-available-pages.md` |
 | `0025-sparc64-leave-out-the-ebus-floppy-node` | The ebus had an `fdthree@0,0` node with one `reg` entry of size 0 and no interrupt. OBP's `fdthree` on the Ultra 5/10 has three (the 82077, the ebus DMA engine that drives it, the auxio register); QEMU's sun4u has a PC-style FDC at I/O `0x3f0` without DMA and neither of the others, so no `reg` would describe a controller that a driver for OBP's node could run. Solaris 8 and 10 warned (`Out of range register specification from device node <fdthree>`); the first, reconfiguring boot of an installed Solaris 9 panicked in `fd` (NULL pointer, `fd_cleanup` ← `fd_attach`). The node is gone on sun4u (OpenBIOS never booted from it: `-boot a` names `/obio/SUNW,fdtwo`); sun4m's `SUNW,fdtwo` is unchanged ("Solaris 8 and 9 install targets on sun4u") | not fixed; see `upstream/openbios-sparc64-floppy-node.md` |
-| `0030-sparc64-reset-the-machine-on-the-client-interface-boot-service` | The client interface `boot` service, through which Solaris, Linux and the BSDs reboot, printed `BOOT` and returned (Solaris: `prom_reboot: reboot call returned!`, Linux: `Reboot failed!`). It now resets the machine (`reset-all`), and `entry` puts back what a power-on leaves and the reset didn't: SOFTINT and the interrupt receive register cleared (Solaris 10 left level 6 pending: `Unhandled Exception 0x6`, 0012's hang), TICK.NPT set (else the firmware's timer keeps firing into the miss handler and the next kernel), and after any reset but the first the RAM below the firmware cleared, except a `-kernel`/`-initrd` image (Solaris 9/10 panicked on the old page structures). The bootspec isn't kept ("The firmware reboot on sun4u") | not reported |
+| `0030-sparc64-reset-the-machine-on-the-client-interface-boot-service` | The client interface `boot` service, through which Solaris, Linux and the BSDs reboot, printed `BOOT` and returned (Solaris: `prom_reboot: reboot call returned!`, Linux: `Reboot failed!`). It now resets the machine (`reset-all`), and `entry` puts back what a power-on leaves and the reset didn't: SOFTINT and the interrupt receive register cleared (Solaris 10 left level 6 pending: `Unhandled Exception 0x6`, 0012's hang), TICK.NPT set (else the firmware's timer keeps firing into the miss handler and the next kernel), and after any reset but the first the RAM below the firmware cleared, except a `-kernel`/`-initrd` image (Solaris 9/10 panicked on the old page structures). The bootspec isn't kept; 0041 adds that ("The firmware reboot on sun4u") | not reported |
 | `0031-sparc64-give-the-solaris-2.5.1-2.6-boot-block-init-program-and-go` | The sun4u boot block of Solaris 2.5.1 and 2.6 (FCode UFS Reader 1.6/1.10) copies ufsboot's ELF segments into place itself, then evaluates `to load-base init-program` with `load-base` at the entry point and `?go`; OpenBIOS's `init-program` recognised no header there and there was no `?go`: `?go:`, `byte-load: exception caught!`. `init-program` looked up by name now takes unrecognised code at `load-base` as the program (as OBP), after clearing `state-valid`; `?go` starts it. Both kernels start ("Solaris 2.5.1 and 2.6 on sun4u: the boot block") | not in OpenBIOS |
 | `0032-sparc64-keep-interrupts-disabled-in-the-mmu-miss-handlers` | The I- and D-MMU miss handlers enabled interrupts around their C handler ("for window spill/fill traps", which don't need them) at TL 1, where the TL>0 table's level 14 entry only retries: a timer interrupt pending then trapped again on the same instruction for good. FreeBSD 12.4's `shutdown -p now` (the `SUNW,power-off` call, with its `%tick` interrupt pending) stayed on after `Uptime:` at 100% of a host core (`-d int`: interrupt 0x4e at one PC). They now run with interrupts disabled, as the trap left them ("FreeBSD 12.4 on sun4u") | not reported |
 | `0033-sparc64-save-and-restore-the-trap-state-of-tl-4-to-1` | `SAVE_CPU_TRAP_STATE`/`RESTORE_CPU_TRAP_STATE` walked `%tl` from 3 down to 0, so a few instructions of every client call ran at TL 0 (no trap state there; `rdpr %tpc` is an illegal instruction at TL 0 on the UltraSPARC), fetched in the primary context. FreeBSD runs its kernel at TL 1 with the user process's context in the primary context register: the firmware's context-0 ITLB entry missed, FreeBSD's own trap table found no mapping, and every reboot and `ofwdump` panicked (`fast instruction access mmu miss (kernel)`; QEMU then stopped with `Trap 0x00a4 while trap level (5) >= MAXTL (5)`). Now TL 4 down to 1 ("FreeBSD 12.4 on sun4u") | not reported |
 | `0034-sparc32-mark-the-cs4231-intr-as-an-sbus-interrupt-0x39` | Linux reads `intr` in the encoding of Sun's PROMs (`sun4m_build_device_irq()`: below 0x20 a software interrupt, 0x20-0x2f on-board, 0x30-0x3f SBus, the low four bits the processor level), so 0018's `intr` 9 was software interrupt 9: Linux 7.3 enabled that and left SBus level 5 masked in the system interrupt mask (`slavio_check_interrupts pending 0x0 disabled 0x7ff33f7f`, bit 11 set), `cs4231` stayed at 0 in `/proc/interrupts` and wisp's `soundtest` failed with EIO after the first buffer. Now `0x39`, as the SS-5's own PROM has it and as OpenBIOS already encodes the ESP (`0x24`). SunOS 4.1.4 takes the low four bits (`SUNW,CS42310 at SBus slot 4 0xc000000 pri 9 (sbus level 5)`) and Solaris 2.6 `interrupts` (still 5); both play. Linux also needs the codec's INT status bit, which QEMU's CS4231 doesn't set ("Audio", "Linux") | ours, not proposed upstream |
 | `0035-sparc64-give-the-ebus-8042-a-kdmouse-child` | The ebus `8042` has only its `kb_ps2` child (reg 0, no interrupts) and one interrupt. Linux's sparc i8042 probe (`i8042-sparcio.h`) needs a keyboard and a mouse child (`kdmouse` or `mouse`) and returns `-ENODEV`, so Linux has no PS/2 keyboard on sun4u; it also takes the keyboard child's translated address as the port base (data at + 0x60) and each child's first interrupt. New option `ps2-mouse?` (default false; `-prom-env ps2-mouse?=true`): the 8042 then gets a `kdmouse` child (reg 1), interrupts 1 and 2 on the 8042 and its children with an ebus `interrupt-map` entry for 2 to the sabre's mouse INO `0x2a` (QEMU's ISA IRQ 12), and `#size-cells` 1 with `ranges` mapping child address 0 to ebus `14,0` (without `ranges` Linux maps a child's reg 1:1, to physical 0). Off by default because Debian 7's Linux 3.2 panics in `sparc_i8042_probe()` once the probe succeeds (its sparc OF driver, also named `i8042`, takes the core's platform device); Debian 12/13 kernels print `Driver 'i8042' is already registered` and carry on without the keyboard. Linux 7.3 gets the keyboard with its OF driver renamed (`e2e/wisp/linux-patches/0001`). With the option false the tree is unchanged apart from the option in `/options`; with it true NetBSD 11.1 also takes the mouse interrupt (`pckbc0 at ebus0 addr 60-67 ipl 29 ipl 2a`) and Solaris 8-10 boot as before | ours, not proposed upstream |
+| `0041-sparc64-boot-the-bootspec-of-a-clients-reboot-after-the-reset` | Since 0030 the client interface `boot` service reset the machine but dropped the client's bootspec, so `reboot -- disk:b` (Solaris 8's mini-root), `reboot -- netbsd -v` or `reboot -- -s` booted `boot-device` with no arguments. The service now keeps the bootspec in a page of low RAM across the reset (taken before 0030's RAM clear, so once, and never after a power-on), and with `auto-boot?` true the firmware boots it (`Rebooting with command: boot <bootspec>`; a bootspec that names no device or alias is all arguments, with `boot-device` searched as usual). Generic part: the `(reboot-bootspec!)` and `reboot-command` defers, which keep the old behaviour elsewhere ("The reboot's boot string on sun4u") | not reported |
 
 When QEMU updates `roms/openbios`, set `OPENBIOS_REF` to the new commit and check the patches.
 
@@ -5093,9 +5094,10 @@ published 11.1.3-3+wsh13):
   asserted on pci bus` (harmless; never on a power-on). pve-qemu `wsh/0068` clears them in
   `sabre_reset()`, qtest `sun4u-sabre-reset-test` (`wsh/0069`).
 
-The boot string isn't kept (as on sparc32, "Known gaps"): the firmware boots its boot device again,
-so Solaris 8's `reboot -- disk:b` into its mini-root still needs `auto-boot?` false and `boot disk:b`
-at `0 >`, but no power cycle any more. QEMU's own reset path (QMP `system_reset`, PVE's Reset)
+The boot string wasn't kept (as on sparc32, "Known gaps"): the firmware booted its boot device
+again, so Solaris 8's `reboot -- disk:b` into its mini-root needed `auto-boot?` false and `boot
+disk:b` at `0 >`, but no power cycle any more. OpenBIOS 0041 keeps it since ("The reboot's boot
+string on sun4u"). QEMU's own reset path (QMP `system_reset`, PVE's Reset)
 goes through the same firmware entry, so it gets the same clean state.
 
 Results (2026-11-22, lab host, up to five guests at once; "reboots" = `sparc64-reboot.py` with
@@ -5126,6 +5128,54 @@ tried: Solaris 8 from an installed disk
 (no stored disk; its installer's two resets passed), a reboot with more than 3 GB of RAM (the clear
 covers it, not measured). Debian 7 (Linux 3.2) reboots, but the RAM clear took minutes after Linux
 had run until pve-qemu `wsh/0112` ("Debian 7 on sun4u" below).
+
+### The reboot's boot string on sun4u (OpenBIOS 0041, 2026-11-28)
+
+0030 resets the machine on the client interface's `boot` service but dropped the bootspec the
+client passes, so the firmware booted `boot-device` again. Where it was lost: nowhere in QEMU.
+The bootspec reached the firmware intact (`boot ( bootspec -- )` in `forth/system/ciface.fs`
+received it) and 0030's `drop reset-all` threw it away; nothing in OpenBIOS survived the reset
+to carry it (NVRAM `boot-file`/`boot-device` are QEMU's `-prom-env`/`-boot` values and the PVE
+`nvram0` volume, which a one-shot reboot string must not change), and the RAM that does survive
+was cleared by 0030 for Solaris's sake.
+
+0041 keeps it in that RAM. The boot service writes the bootspec (trimmed, at most 255 bytes)
+behind a magic number into physical page `0x2000`, which no firmware code touches before
+`openbios()` runs again; after a warm reset `openbios()` takes it from there before 0030's RAM
+clear, so it is used once and never after a power-on (QEMU starts with zeroed RAM). When
+`auto-boot?` is true, `initialize-of` evaluates `boot <bootspec>` instead of `boot-command` and
+prints OBP's `Rebooting with command: boot <bootspec>`; with `auto-boot?` false the firmware stops
+at `0 >` as before, so the install targets that set it (`sol8-sun4u`) behave as they did. A
+bootspec whose first word is neither a path nor an alias in `/aliases` (`netbsd`, `-s`, `-v`) is
+all arguments: the firmware evaluates `boot  <bootspec>` (an empty device), so `boot` searches
+`boot-device` as it does without one and passes the bootspec as the boot arguments. An empty
+bootspec (plain `reboot`, `init 6`) changes nothing. No QEMU change: QMP `system_reset` and PVE's
+Reset find no magic and boot as before.
+
+Results (lab, QEMU from the series to `wsh/0191`, `openbios-sparc64` built from `openbios/` with
+0001-0041; `sparc64-reboot.py` with `EXPECT` for the firmware's line and `CHECK` for what the
+guest saw; NetBSD 11.1 on `netbsd111-sparc64-installed.raw`):
+
+| Run | Result |
+| --- | --- |
+| NetBSD, `reboot -- netbsd -v` | passed: `Rebooting with command: boot netbsd -v` 1 s after the banner, `Trying disk:a...`, ofwboot loads `netbsd` with `-v`: the kernel's boot is verbose (`Kernelized RAIDframe activated`, the `timecounter` lines, which the first boot doesn't print), `machdep.booted_kernel = netbsd`; login again 59 s after the command |
+| NetBSD, `reboot -- disk:a netbsd -v` (a device first) | passed: `Rebooting with command: boot disk:a netbsd -v`, verbose boot (3 `timecounter` lines in `dmesg`), login again after 69 s |
+| NetBSD, `reboot` x2 (no bootspec) | passed: no `Rebooting with command`, `Trying disk:a...` after each reset as before; 58-63 s to login again |
+| Solaris 10 1/13 (`install-sol10-sun4u.raw`), `reboot -- -v` | passed: `Rebooting with command: boot -v` 1 s after the banner, a verbose boot (the `pseudo-device:` lines), `prtconf -vp` shows `bootargs: '-v'` in `/chosen`; banner 16 s and login 418 s after the command |
+| Tribblix m34 (a copy of a ZFS disk after its first boot), `reboot -- -v` | passed: `Rebooting with command: boot -v`, `bootargs: '-v'` in `/chosen`; banner 83 s and login 875 s after the command |
+
+Regression with this firmware mounted over the package's (`matrix.py sparc64`, the published
+11.1.3-4+wsh37 QEMU): 11/12; `nb111-cd-vga-sparc64` failed (NetBSD's installer didn't switch to
+German after `b` within 120 s) and fails the same way, alone, with the package's own firmware: not
+0041 (not investigated). `nb111-reboot-bootstr-sparc64` now prints `Rebooting with command: boot
+netbsd` and passes as before.
+
+Not run: Solaris 8's own `reboot -- disk:b` into its mini-root (the `sol8-sun4u` install target
+through PVE keeps `auto-boot?` false and `boot disk:b` at `0 >` until a package carries 0041; with
+it, the target can drop `prom_env` and `solaris-webstart-serial.py` has to accept the firmware
+booting the mini-root itself, as it does for the SS-5 PROM); `auto-boot?` false with a bootspec
+(the code path is the unchanged `auto-boot? if`); sparc32 (its romvec reboot is separate code,
+"Known gaps"); OpenBSD and Linux with a bootspec.
 
 ### Debian 7 on sun4u (pve-qemu `wsh/0110`-`0113`, 2026-11-22)
 

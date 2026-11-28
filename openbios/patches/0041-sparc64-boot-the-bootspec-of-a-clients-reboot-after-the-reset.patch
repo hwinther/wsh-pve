@@ -1,0 +1,268 @@
+From: Hans Christian Winther-Sorensen <hc@wsh.no>
+Subject: [PATCH] sparc64: boot the bootspec of a client's reboot after the
+ reset
+
+Since patch 0030 the client interface's boot service resets the machine,
+but it dropped the bootspec the client passed, and the firmware booted
+its boot-device again. OBP boots the bootspec ("Rebooting with command:
+boot disk:b"): Solaris 8's installer reboots into its mini-root on the
+swap slice with "reboot -- disk:b" and relies on that, NetBSD's
+"reboot -- netbsd" names the kernel, Solaris' "reboot -- -s" asks for
+single-user mode.
+
+The RAM is all that survives QEMU's reset. The boot service now writes
+the bootspec (trimmed, at most 255 bytes) with a magic number into a
+page of low RAM that no firmware code uses before openbios() runs again;
+after a warm reset openbios() takes it from there before it clears the
+RAM (patch 0030), so a bootspec is used once, after the reset it asked
+for, and never after a power-on (zeroed RAM). When auto-boot? is true,
+initialize-of then evaluates "boot <bootspec>" instead of boot-command;
+with auto-boot? false the firmware stops at its prompt as before.
+
+A bootspec whose first word is neither a path nor an alias in /aliases
+("netbsd", "-s") is all arguments: it becomes "boot  <bootspec>", an
+empty device, so the boot command searches boot-device as it does
+without one and passes the bootspec as the arguments.
+
+The generic part (the (reboot-bootspec!) and reboot-command defers)
+keeps the old behaviour where a platform doesn't set them.
+---
+ arch/sparc64/openbios.c | 147 ++++++++++++++++++++++++++++++++++++++++
+ forth/admin/reset.fs    |   6 ++
+ forth/system/ciface.fs  |   5 +-
+ forth/system/main.fs    |  12 +++-
+ 4 files changed, 166 insertions(+), 4 deletions(-)
+
+diff --git a/arch/sparc64/openbios.c b/arch/sparc64/openbios.c
+index bc6bdb4..4b97a71 100644
+--- a/arch/sparc64/openbios.c
++++ b/arch/sparc64/openbios.c
+@@ -807,6 +807,146 @@ dma_sync(void)
+     }
+ }
+ 
++/* A client's reboot with a bootspec (Solaris' "reboot -- disk:b", NetBSD's
++   "reboot -- netbsd": the client interface's boot service) boots that
++   bootspec after the reset, as OBP does. The RAM is all that survives the
++   reset: the boot service writes the bootspec to a page of RAM that no
++   firmware code uses before openbios() runs again, and openbios() takes it
++   from there after a warm reset, before it clears the RAM. A power-on starts
++   with zeroed RAM, so the bootspec is used once, after the reset it asked
++   for. */
++#define REBOOT_BOOTSPEC_PA      0x2000ULL
++#define REBOOT_BOOTSPEC_MAGIC   0x5753485245424f4fULL   /* "WSHREBOO" */
++#define REBOOT_BOOTSPEC_MAX     255
++
++static char reboot_bootspec[REBOOT_BOOTSPEC_MAX + 1];
++static char reboot_command_buf[REBOOT_BOOTSPEC_MAX + 8];
++
++static void phys_stx(uint64_t pa, uint64_t val)
++{
++    asm volatile("stxa %0, [%1] %2"
++                 : : "r" (val), "r" (pa), "i" (ASI_PHYS_USE_EC) : "memory");
++}
++
++static uint64_t phys_ldx(uint64_t pa)
++{
++    uint64_t val;
++
++    asm volatile("ldxa [%1] %2, %0"
++                 : "=r" (val) : "r" (pa), "i" (ASI_PHYS_USE_EC) : "memory");
++    return val;
++}
++
++static void phys_stb(uint64_t pa, uint8_t val)
++{
++    asm volatile("stba %0, [%1] %2"
++                 : : "r" (val), "r" (pa), "i" (ASI_PHYS_USE_EC) : "memory");
++}
++
++static uint8_t phys_ldub(uint64_t pa)
++{
++    uint8_t val;
++
++    asm volatile("lduba [%1] %2, %0"
++                 : "=r" (val) : "r" (pa), "i" (ASI_PHYS_USE_EC) : "memory");
++    return val;
++}
++
++/* (reboot-bootspec!) ( str len -- ), from the boot service just before
++   reset-all. Leading and trailing blanks are dropped; an empty bootspec
++   leaves nothing, so the firmware boots as after a power-on. */
++static void sparc64_reboot_bootspec_store(void)
++{
++    ucell len = POP();
++    const char *str = cell2pointer(POP());
++    ucell i;
++
++    while (len && (*str == ' ' || *str == '\t')) {
++        str++;
++        len--;
++    }
++    while (len && (str[len - 1] == ' ' || str[len - 1] == '\t' ||
++                   str[len - 1] == '\n' || str[len - 1] == '\r')) {
++        len--;
++    }
++    if (len > REBOOT_BOOTSPEC_MAX) {
++        len = REBOOT_BOOTSPEC_MAX;
++    }
++    if (len == 0) {
++        phys_stx(REBOOT_BOOTSPEC_PA, 0);
++        return;
++    }
++    for (i = 0; i < len; i++) {
++        phys_stb(REBOOT_BOOTSPEC_PA + 16 + i, str[i]);
++    }
++    phys_stx(REBOOT_BOOTSPEC_PA + 8, len);
++    phys_stx(REBOOT_BOOTSPEC_PA, REBOOT_BOOTSPEC_MAGIC);
++}
++
++/* After a warm reset, before the RAM is cleared */
++static void sparc64_reboot_bootspec_take(void)
++{
++    uint64_t len, i;
++
++    if (phys_ldx(REBOOT_BOOTSPEC_PA) != REBOOT_BOOTSPEC_MAGIC) {
++        return;
++    }
++    len = phys_ldx(REBOOT_BOOTSPEC_PA + 8);
++    if (len > REBOOT_BOOTSPEC_MAX) {
++        len = 0;
++    }
++    for (i = 0; i < len; i++) {
++        reboot_bootspec[i] = phys_ldub(REBOOT_BOOTSPEC_PA + 16 + i);
++    }
++    reboot_bootspec[len] = '\0';
++    phys_stx(REBOOT_BOOTSPEC_PA, 0);
++}
++
++/* Whether the bootspec starts with a device: a path, or an alias (the part
++   before any ':', '@' or blank) in /aliases. Otherwise it is all arguments
++   ("netbsd", "-s", "kernel/unix -v") and the firmware searches boot-device
++   for the device, as the "boot" command does without one. */
++static int bootspec_names_device(const char *spec)
++{
++    char alias[REBOOT_BOOTSPEC_MAX + 1];
++    phandle_t ph;
++    int len, i;
++
++    if (spec[0] == '/') {
++        return 1;
++    }
++    for (i = 0; spec[i] && spec[i] != ' ' && spec[i] != '\t' &&
++                spec[i] != ':' && spec[i] != '@'; i++) {
++        alias[i] = spec[i];
++    }
++    alias[i] = '\0';
++    if (i == 0) {
++        return 0;
++    }
++    ph = find_dev("/aliases");
++    return ph && get_property(ph, alias, &len) != NULL;
++}
++
++/* reboot-command ( -- str len ): "boot <bootspec>" once after a client's
++   reboot with a bootspec (initialize-of evaluates it when auto-boot? is
++   true, instead of boot-command), else 0 0 */
++static void sparc64_reboot_command(void)
++{
++    if (!reboot_bootspec[0]) {
++        PUSH(0);
++        PUSH(0);
++        return;
++    }
++    printk("Rebooting with command: boot %s\n", reboot_bootspec);
++    /* "boot  <args>" (an empty device) when the bootspec names no device */
++    snprintf(reboot_command_buf, sizeof(reboot_command_buf), "boot %s%s",
++             bootspec_names_device(reboot_bootspec) ? "" : " ",
++             reboot_bootspec);
++    reboot_bootspec[0] = '\0';
++    PUSH(pointer2cell(reboot_command_buf));
++    PUSH(strlen(reboot_command_buf));
++}
++
+ extern volatile uint64_t *obp_ticks_pointer;
+ 
+ static void
+@@ -863,6 +1003,12 @@ arch_init( void )
+         push_str("' sparc64-power-off to power-off");
+         fword("eval");
+ 
++	/* A client's reboot boots its bootspec after the reset */
++	bind_func("sparc64-reboot-bootspec!", sparc64_reboot_bootspec_store);
++	feval("' sparc64-reboot-bootspec! to (reboot-bootspec!)");
++	bind_func("sparc64-reboot-command", sparc64_reboot_command);
++	feval("' sparc64-reboot-command to reboot-command");
++
+ 	bind_func("platform-boot", boot );
+ 	bind_func("(init-program-at-load-base)", init_program_at_load_base );
+ }
+@@ -931,6 +1077,7 @@ int openbios(void)
+             for(;;); // Internal inconsistency, hang
+ 
+         if (sparc64_warm_reset) {
++            sparc64_reboot_bootspec_take();
+             sparc64_clear_ram();
+         }
+ 
+diff --git a/forth/admin/reset.fs b/forth/admin/reset.fs
+index 5656926..ff88681 100644
+--- a/forth/admin/reset.fs
++++ b/forth/admin/reset.fs
+@@ -10,3 +10,9 @@ defer reset-all    ( -- )
+ 
+ \ OpenBOOT knows reset as well.
+ : reset reset-all ;
++
++\ Keeps the bootspec of a client's reboot (the client interface's boot
++\ service) across the reset, for reboot-command (main.fs) to boot it;
++\ dropped where the platform has nothing to keep it in
++defer (reboot-bootspec!) ( str len -- )
++' 2drop to (reboot-bootspec!)
+diff --git a/forth/system/ciface.fs b/forth/system/ciface.fs
+index 7527a31..1b1ef07 100644
+--- a/forth/system/ciface.fs
++++ b/forth/system/ciface.fs
+@@ -263,10 +263,9 @@ external
+ \ -------------------------------------------------------------
+ 
+ \ The client asks for a reboot (Solaris' reboot and uadmin, Linux's restart):
+-\ reset the machine. The bootspec isn't kept, the firmware boots its
+-\ boot-device again.
++\ keep its bootspec and reset the machine.
+ : boot ( bootspec -- )
+-  drop reset-all
++  dup cstrlen (reboot-bootspec!) reset-all
+ ;
+ 
+ : enter ( -- )
+diff --git a/forth/system/main.fs b/forth/system/main.fs
+index 122ab1f..e1e1b1e 100644
+--- a/forth/system/main.fs
++++ b/forth/system/main.fs
+@@ -30,6 +30,12 @@ variable DIAG-list
+ ;
+ 
+ 
++\ The boot command for a client's reboot with a bootspec ("boot <bootspec>"),
++\ once; 0 0 if there is none (sparc64 sets it)
++: no-reboot-command ( -- str len ) 0 0 ;
++defer reboot-command ( -- str len )
++' no-reboot-command to reboot-command
++
+ \ OpenFirmware entrypoint
+ : initialize-of ( startmem endmem -- )
+   initialize-forth
+@@ -53,7 +59,11 @@ variable DIAG-list
+   DIAG-list begin list-get while @ execute repeat
+ 
+   auto-boot? if
+-    boot-command evaluate
++    reboot-command ?dup if
++      evaluate
++    else
++      drop boot-command evaluate
++    then
+   then
+ 
+   outer-interpreter

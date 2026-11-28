@@ -239,9 +239,10 @@ MATRICES["sparc64"] = [
     # reboot from the guest: the firmware's boot service resets the machine (openbios-sparc64 patch
     # 0030, pve-qemu-kvm 11.1.3-4+wsh3 or later; before it the boot service returned and the machine
     # didn't reset), the banner comes back in the same QEMU process and the disk boots to login: again, twice.
-    # The second case passes a boot string (reboot -- netbsd): the firmware drops it and boots its
-    # boot device again (submodules/SPARC.md, "The firmware reboot on sun4u"), so this only checks
-    # that a reboot with one comes back too
+    # The second case passes a boot string (reboot -- netbsd): the package's firmware drops it and
+    # boots its boot device again (submodules/SPARC.md, "The firmware reboot on sun4u"), so this only
+    # checks that a reboot with one comes back too. openbios 0041 boots it ("Rebooting with command:
+    # boot netbsd"); once a published package carries 0041, add that as the case's EXPECT
     ("nb111-reboot-sparc64", "sparc64-reboot.py", NB111_64, None, {"GUEST": "netbsd", "REBOOTS": "2"}),
     ("nb111-reboot-bootstr-sparc64", "sparc64-reboot.py", NB111_64, None,
      {"GUEST": "netbsd", "REBOOT": "reboot -- netbsd", "REBOOTS": "1"}),

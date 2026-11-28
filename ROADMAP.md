@@ -179,8 +179,13 @@ merged; what is left of them is item 2 under "Next".
    (`sol251-sun4u`, `sol26-sun4u`, `sol7-sun4u` to `sol10-sun4u`, `tribblix-m34-sun4u`; 2.6 and 2.5.1
    with pve-qemu-kvm 11.1.3-4+wsh15 or later, openbios 0036-0039, Done). Open:
    - after the firmware reboot (Done): Tribblix's `reboot` and `init 6` come back to login (lab,
-     2026-11-28; `sparc64-reboot.py GUEST=tribblix`); the reboot's boot string is still dropped (Solaris 8's mini-root needs `auto-boot?` false and `boot disk:b`; the `sparc64`
-     matrix case `nb111-reboot-bootstr-sparc64` only checks that such a reboot comes back);
+     2026-11-28; `sparc64-reboot.py GUEST=tribblix`); the reboot's boot string is kept by
+     OpenBIOS 0041 (in review: the firmware boots it after the reset when `auto-boot?` is true;
+     NetBSD and Solaris 10 verified in the lab). Once a package carries 0041: give the `sparc64`
+     matrix case `nb111-reboot-bootstr-sparc64` an `EXPECT` for `Rebooting with command: boot
+     netbsd`, and try `sol8-sun4u` without `prom_env` (its mini-root reboot;
+     `solaris-webstart-serial.py` then has to wait for the firmware to boot `disk:b`, as it does
+     for the SS-5 PROM);
    - Tribblix: a UFS install (`ROOT_FS=ufs`) hasn't been booted. The ZFS root's DEGRADED disk is
      explained (not QEMU, not `wsh/0135`'s kind): illumos ZFS aggregates I/O up to 1 MB and `dad`
      refuses bufs over 128 KB with `EINVAL`; the install and first-boot scenarios cap

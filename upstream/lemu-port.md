@@ -269,3 +269,4 @@ This page is about sending our patches *to LEMU*. What may go to QEMU is decided
 | openbios/0038-sparc64-leave-the-lock-bit-out-of-the-translations-property.patch | ours | - | none | none | not in LEMU: applies on feat/openbios-fixes (same OpenBIOS base) |
 | openbios/0039-sparc64-name-the-root-node-sun-ultra-5-10.patch | ours | - | none | none | not in LEMU: applies on feat/openbios-fixes (same OpenBIOS base) |
 | openbios/0040-sparc32-take-the-srmmu-tables-from-chunks-of-a-larger-heap.patch | ours | - | none | none | not in LEMU: not checked yet |
+| openbios/0041-sparc64-boot-the-bootspec-of-a-clients-reboot-after-the-reset.patch | ours | - | none | none | not in LEMU: not checked yet |
