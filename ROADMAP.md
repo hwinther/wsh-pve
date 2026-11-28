@@ -256,8 +256,14 @@ merged; what is left of them is item 2 under "Next".
      [audio reference](docs/src/content/docs/reference/audiodev.md). A DOS test of a sound card
      through a program's own driver now exists: wshspace `-audiotest` plays the audio signature
      (`e2e/wisp/audiosig.h`) on the SB16 in `dos-test.sh`, checked by `wavcheck.py --signature`.
-     Next: GUS and CS4231A (a DOS test for each, on that pattern); Windows guests (9x with SB16/ES1370, XP with AC97/HDA); listening on a
-     real node over `pa`.
+     The GUS and the CS4231A (QEMU devices qemu-server doesn't offer) are in the matrix too, on QEMU
+     directly: `AUDTEST.COM` programs the GF1 (reset, a sine period into DRAM through the DRAM I/O
+     port, two looping voices panned left and right) and the WSS codec (mode change, 16-bit stereo
+     at 16 kHz by auto-init DMA), a different tone on each channel, checked one channel at a time
+     (`wavcheck.py --channel`, with the tone's duration). Both play. Found: QEMU's GUS swaps left
+     and right (GUSemu's mixer writes each frame right first; a fix would be a pve-qemu patch,
+     not made); the CS4231A plays by DMA only (no PIO, no WSS configuration register at 530h).
+     Next: Windows guests (9x with SB16/ES1370, XP with AC97/HDA); listening on a real node over `pa`.
    - Display: std VGA, Cirrus, VMware, QXL against noVNC and SPICE, for DOS, Windows 3.x–XP and
      older Linux.
    - Streaming: 2D/3D video and audio in one connection (Moonlight to Sunshine or Wolf), without a

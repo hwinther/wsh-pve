@@ -45,8 +45,8 @@ In QEMU but not offered by qemu-server (would need `args:`):
 | `ES1370` (PCI) | Linux `snd-ens1370` | plays | The mixer isn't muted at start. Windows 9x/2000 drivers exist (Ensoniq AudioPCI). |
 | `virtio-sound-pci` | Linux `virtio_snd` (5.13+) | plays | Modern Linux only. |
 | `usb-audio` (with `qemu-xhci`) | Linux `snd-usb-audio` | plays | Needs a USB controller. |
-| `gus` (ISA, Gravis Ultrasound GF1) | - | not tested | Port 240h, IRQ 7, DMA 3: IRQ 7 is LPT1's when the VM has a parallel port. |
-| `cs4231a` (ISA, Windows Sound System) | - | not tested | Port 534h, IRQ 9, DMA 3: IRQ 9 is also `ne2k_isa`'s default, and DMA 3 is the GUS's. |
+| `gus` (ISA, Gravis Ultrasound GF1) | DOS: own program, GF1 reset, a waveform written into DRAM through the DRAM I/O port, two looping voices panned hard left and right | plays, **left and right swapped** | Port 240h, IRQ 7, DMA 3: IRQ 7 is LPT1's when the VM has a parallel port. Frequency control, loop points, volume and pan work as on a GF1 with 14 voices (44.1 kHz). QEMU's mixer (GUSemu) writes each frame right channel first and QEMU's audio frames are left first, so pan 0 (left) is heard on the right. The GUS's output runs all the time, so with `wav` the file grows while the VM runs, not only while it plays (silence when no voice is on). |
+| `cs4231a` (ISA, Windows Sound System) | DOS: own program, mode change to 16-bit stereo at 16000 Hz, auto-init DMA on channel 3 | plays | Port 534h (the codec; QEMU has no WSS configuration register at 530h), IRQ 9, DMA 3: IRQ 9 is also `ne2k_isa`'s default, and DMA 3 is the GUS's. DMA playback only: PIO playback (I9 PPIO) and capture aren't emulated, nor are the timer, ADPCM and the output attenuation and mute (I6/I7). Formats: 8-bit unsigned, µ-law, A-law, 16-bit little-endian and (MODE2) big-endian, at the codec's rates, except (read from QEMU's source, not tested) that crystal 1's rate 7 plays at 9000 Hz instead of 9600 and its reserved rates 4 and 5 are refused. |
 | `hda-output` | - | not tested | An output-only HDA codec. |
 
 ISA resources at a glance (QEMU defaults, none settable through qemu-server): SB16 220h/IRQ 5/DMA
@@ -151,12 +151,18 @@ Alternatively you can use the tcp, tcp4 or tcp6 protocol prefixes to connect to 
 - **DOS**: FreeDOS 1.4's boot floppy (by URL and sha256; CI keeps the zip in the Actions cache) with its start-up files
   replaced, so it runs `AUDTEST.COM`, a small program written for the test (`audtest.asm`, built
   with nasm). It plays 1000 Hz on the SB16 (8-bit PCM by DMA), 440 Hz on the OPL2 and 750 Hz on the
-  PC speaker, one after the other, then powers off through ACPI.
+  PC speaker, then two tones at once on the GUS (a sine period in its DRAM, voice 0 at 551.25 Hz
+  hard left, voice 1 at 1102.5 Hz hard right) and on the CS4231A (16-bit stereo square waves by
+  DMA, 800 Hz left and 1600 Hz right), one after the other, then powers off through ACPI. A device
+  that isn't attached is detected as missing and skipped. No third-party drivers.
 - **Linux**: Debian's kernel and an initramfs with busybox, `aplay` and one sound driver; it unmutes
   the mixer, plays a 660 Hz tone, reports on the serial console and powers off. No install.
 - **The check**: the wav file must hold the expected tones (zero-crossing frequency within 4 %, RMS
   above -50 dBFS, at least 0.15 s) and no tone of a device that isn't attached, so
-  `sb16-adlib-pcspk` must give all three and `sb16` only the 1000 Hz one.
+  `sb16-adlib-pcspk` must give all three and `sb16` only the 1000 Hz one. The GUS and CS4231A
+  recordings are checked one channel at a time: each channel must hold its own tone for 0.9 to 1.6 s
+  (AUDTEST plays 1.2 s) and none of the other tones. The GUS case passes with the channels swapped
+  (see the table) and says so in the summary; when QEMU fixes the order it says that instead.
 - **Through Proxmox VE** (the e2e node in a container): a VM per `audio0` value with
   `driver=wav`. `qm showcmd` must have the expected `-device`/`-machine` arguments and the `wav`
   audiodev with the fixed path, and a real `qm start` must run the guest to its power off with the
