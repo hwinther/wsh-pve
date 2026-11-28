@@ -156,6 +156,12 @@ GUESTS = {
     # Solaris 7, 8 and 9 (the sun4u install targets' disks; root's password is the install's)
     "solaris": {"PROMPT": r"console login: ?$", "USER": "root", "PASSWORD": "", "POWEROFF": "init 5",
                 "COMMANDS": "uname -a ;; prtconf | head -2 ;; df -k /"},
+    # Tribblix m34 (the tribblix-m34-sun4u target's disk after its first boot; root's shell is bash,
+    # whose bracketed paste mode garbles the command markers: sh for the commands). Its services time
+    # out on the way down under TCG: init 5 took 6-11 minutes
+    "tribblix": {"PROMPT": r"console login: ?$", "USER": "root", "PASSWORD": "wshlab", "POWEROFF": "sync; init 5",
+                 "POWEROFF_TIMEOUT": "1800", "LOGIN_SHELL": "exec /bin/sh",
+                 "COMMANDS": "uname -a ;; prtconf | head -3 ;; zpool status -x"},
 }
 
 
@@ -205,7 +211,7 @@ def power_off(m, v):
     the guest asks it to). Returns the host seconds it took."""
     t0 = time.time()
     m.send(f"{v['POWEROFF']}\r")
-    code = m.wait_exit(600)
+    code = m.wait_exit(int(v.get("POWEROFF_TIMEOUT") or 600))
     if code != 0:
         raise AssertionError(f"QEMU exited with {code} after {v['POWEROFF']!r}")
     return time.time() - t0

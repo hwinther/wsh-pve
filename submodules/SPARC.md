@@ -4458,6 +4458,22 @@ an older Tribblix on sun4u (`no nucleus hblk8`, fixed by 0003). Lab, QEMU starte
   60 minutes; `fmd` had logged no ereport by then), and `tribblix-firstboot.py` on the disk itself
   passed in 64 minutes (login 53, `zpool status -x`: all pools healthy). Not run: `--check`
   through PVE, a reinstall of the stored disk, idle or a long soak with the cap.
+- **Reboot (2026-11-28).** Tribblix reboots through the firmware's `boot` service as Solaris
+  does (illumos `mdboot()` → `prom_reboot()`, OpenBIOS 0030), and both `reboot` and `init 6` come
+  back to `console login:` in the same QEMU process. Measured in the lab with `sparc64-reboot.py
+  GUEST=tribblix` (QEMU built from the series to `wsh/0191`, the package's `openbios-sparc64` from
+  11.1.3-4+wsh37, 2048 MB, copies of a ZFS disk installed and first-booted with the 128 KB cap,
+  two guests at once):
+
+  | Run | Result |
+  | --- | --- |
+  | `reboot` x2 | passed: the banner 102 and 109 s after the command (most of it the kernel's own shutdown; the reset itself takes a few seconds), `console login:` again 1035 and 982 s after it; first boot 907 s; `init 5` at the end 632 s |
+  | `init 6` x1 | passed: the banner 837 s after the command (SMF stops the services, several by their timeouts: `Shutdown took 785 seconds`), `console login:` again 1765 s after it; first boot 988 s; `init 5` 659 s |
+
+  No panic, no FMA or ZFS message on the console in either run. `reboot` skips the SMF shutdown
+  and is the quicker of the two by about 12 minutes under TCG. Not run: a reboot through PVE (the
+  firmware path is the same as for Solaris 10, whose reboot passed through PVE), a reboot of the
+  live CD.
 - **The ZFS boot block (patch 0017):** OpenBIOS loads the ZFS boot block from the disk and it loads
   its second stage (the `zfs-file-system` package from 512 KB into the slice), then
   `Unhandled Exception 0x0000000000000030` with the PC in `unaligned-l@`. The Forth return stack read
@@ -5105,7 +5121,8 @@ after each, in one QEMU process; QEMU is the published 11.1.3-3+wsh13 unless "+0
 
 Before 0030's RAM clear, with only the SOFTINT and NPT fixes, Solaris 9 and 10 reached their
 kernels after a reset and panicked in `startup_memlist`/`kphysm_init`; NetBSD and OpenBSD passed.
-Not tried: Tribblix (illumos uses the same `prom_reboot()`), Solaris 8 from an installed disk
+Tribblix's `reboot` and `init 6` passed since (2026-11-28, "Tribblix on sun4u", "Reboot"). Not
+tried: Solaris 8 from an installed disk
 (no stored disk; its installer's two resets passed), a reboot with more than 3 GB of RAM (the clear
 covers it, not measured). Debian 7 (Linux 3.2) reboots, but the RAM clear took minutes after Linux
 had run until pve-qemu `wsh/0112` ("Debian 7 on sun4u" below).
