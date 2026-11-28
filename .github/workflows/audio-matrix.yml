@@ -3,7 +3,7 @@ name: x86 audio matrix
 # Which sound devices of the published pve-qemu-kvm make sound in which guest, and whether the
 # published qemu-server's `audio0:` wires them up (e2e/audio/audio_matrix.py): a FreeDOS boot floppy
 # (from the Floppy Edition zip in the Actions cache, which main saves and pull requests restore)
-# running our own AUDTEST.COM (SB16, AdLib, PC speaker) and a Debian kernel + initramfs playing a tone
+# running our own AUDTEST.COM (SB16, AdLib, PC speaker, GUS, CS4231A) and a Debian kernel + initramfs playing a tone
 # with aplay (AC97, ES1370, Intel HDA, virtio-sound, USB audio), recorded with QEMU's `wav` backend
 # and checked for the expected tones. Directly on QEMU and through qemu-server (`audio0: driver=wav`:
 # `qm showcmd`, then a real `qm start`) on the e2e PVE node. Every recording's wav header is checked
