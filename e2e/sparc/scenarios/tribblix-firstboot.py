@@ -27,7 +27,7 @@ import ipaddress
 import re
 
 from _sparc64 import DEFAULTS as BASE, qemu_args as sparc64_args, shell
-from _tribblix import BANNER, FAIL, LIVE_ROOT_PASSWORD, login, power_off
+from _tribblix import BANNER, FAIL, LIVE_ROOT_PASSWORD, limit_zfs_aggregation, login, power_off
 
 DEFAULTS = {**BASE, "MEM": "2048", "BOOT": "c", "NET": "user", "ROOT_PASSWORD": "", "MARKER": "", "USER": "",
             "USER_PASSWORD": "", "NET_MODE": "", "NET_IP": "", "NET_NETMASK": "", "NET_NETWORK": "",
@@ -77,9 +77,13 @@ def run(m, v):
     if v["ROOT_PASSWORD"]:
         passwd(m, "root", v["ROOT_PASSWORD"])
         m.snap("root password set")
-    # A ZFS root (ROOT_FS=zfs) comes up DEGRADED: FMA counted the I/Os that ZFS had to retry during
-    # the install (submodules/SPARC.md, "Tribblix on sun4u"); there were no data errors
-    shell(m, "if zpool list rpool >/dev/null 2>&1; then zpool clear rpool; zpool status -x; fi", 300)
+    # A ZFS root: the aggregation limit for the IDE disk (the install put it into /etc/system; also set
+    # here for disks installed without it), and `zpool clear` for a disk that FMA marked DEGRADED
+    # before (submodules/SPARC.md, "Tribblix on sun4u")
+    out, _ = shell(m, "zpool list -H -o name rpool", 300)
+    if re.search(r"^rpool\s*$", out, re.M):
+        limit_zfs_aggregation(m)
+        shell(m, "zpool clear rpool; zpool status -x", 300)
     # the live CD's own user, jack/jack, came along with its /etc: locked
     out, _ = shell(m, "if grep '^jack:' /etc/passwd >/dev/null; then passwd -l jack; passwd -s jack; fi")
     if re.search(r"^jack\s+(?!LK)\S+", out, re.M):

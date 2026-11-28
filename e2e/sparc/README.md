@@ -2449,9 +2449,12 @@ boot-test the stored disk").
    imports its SMF manifests, asks for the keyboard layout (Return) and comes to `console login:`;
    the scenario logs in as root with the live CD's password (`tribblix`), turns off bash's bracketed
    paste mode (its `ESC [?2004l` in front of each command's output hid `shell()`'s marker), finds the
-   IDE disk (`c1t0d0`, the one at `ide@3/dad@0,0`), takes the network down and runs
-   `/root/live_install.sh -G -n <host name> c1t0d0` (Tribblix's default: a ZFS root pool on the whole
-   disk; FMA marks the disk DEGRADED during the copy, see SPARC.md). It powers off with `init 5`.
+   IDE disk (`c1t0d0`, the one at `ide@3/dad@0,0`), takes the network down, caps ZFS's I/O
+   aggregation at 128 KB (`zfs_vdev_aggregation_limit`, in the live kernel and in the live
+   `/etc/system` that the installer copies: illumos ZFS joins I/Os up to 1 MB, the IDE disk driver
+   `dad` refuses anything over 128 KB, and FMA marked the disk DEGRADED for the retries; SPARC.md,
+   "The DEGRADED disk") and runs `/root/live_install.sh -G -n <host name> c1t0d0` (Tribblix's
+   default: a ZFS root pool on the whole disk). It powers off with `init 5`.
    `ROOT_FS=ufs` labels the disk instead (`format-a-disk.sh`, then `fmthard`: slice 0 for `/`,
    `SWAP_MB` = 1 GB of swap on slice 1) and runs `echo y | /root/ufs_install.sh -n <host name>
    c1t0d0s0` (its newfs asks); that ran through PVE up to its last steps but hasn't been booted.
@@ -2459,7 +2462,8 @@ boot-test the stored disk").
    live CD's `/etc`), `passwd root` sets the target's password (with `MINNONALPHA` relaxed for that
    call, as on Solaris 10), `passwd -l jack` locks the live CD's user, the marker, the network with
    `ipadm` (`-T static` with the address and `route -p add default`, or `-T dhcp`), DNS
-   (`/etc/resolv.conf`, `nsswitch.dns`), the optional user, `zpool clear rpool` (the DEGRADED mark),
+   (`/etc/resolv.conf`, `nsswitch.dns`), the optional user, the aggregation cap again (for disks
+   installed without it) and `zpool clear rpool` (a DEGRADED mark from before),
    `init 5`. NWAM (`network/physical:nwam`) is switched off for `network/physical:default` first; its
    stop method times out under TCG and leaves it in maintenance, so the scenario polls and clears it
    instead of `svcadm disable -s`. The first boot imports the SMF
@@ -2501,6 +2505,7 @@ the published packages needed that day), 2026-11-18:
 | `tribblix-firstboot.py` on that disk (static, `--user`) | passed: root's password, `jack` locked, marker, `hme0/v4 static 10.0.2.15/24`, default route, DNS, user `lab` | 38 min (login 17, power-off 9) |
 | `tribblix-boot-disk.py` on that disk | the commands passed (`target=tribblix-m34-sun4u`, `hme0/v4` static after the reboot, `jack LK`, `lab`); the default route was missing after the reboot (since then also in `/etc/defaultrouter`); `init 5` took longer than the 900 s the scenario waited then (now 1800) | login 16 min |
 | `tribblix-install-sparc64.py ROOT_FS=zfs`, lab | passed: disk `c1t0d0` found, offline, `live_install.sh` exit 0, 18 packages skipped, `rpool` DEGRADED, `init 5` | 106 min (live CD login 55, install 48, power-off 3) |
+| the same with the 128 KB aggregation cap (2026-11-28, `qemu-system-sparc64` built from the series to 0191) | passed: `live_install.sh` exit 0, 18 packages skipped, `rpool` ONLINE, 0 read, write and checksum errors | 93 min (live CD login 51, install 38, power-off 3) |
 | `lab.py install tribblix-m34-sun4u --vmid 9401`/`9402` (ZFS, first versions) | the live CD booted through PVE, login after 48 min; the scenario's marker never matched behind bash's bracketed paste escapes (fixed); stopped | |
 | `--vmid 9403` (UFS) | label written, `ufs_install.sh` waited at newfs's `(y/n)?` (fixed: `echo y \|`); stopped | |
 | `--vmid 9404` (UFS) | the clock stopped during the live CD's SMF import (11/95); stopped | |

@@ -12,9 +12,9 @@ with tribblix-firstboot.py (root's password, marker, network) and tribblix-boot-
   HOSTNAME   the installed system's node name (-n)                         (tribblix)
   DISK_DEV   the disk as illumos names it  (none: the one on the IDE primary master, ide@3/dad@0,0;
              c1t0d0 on the live CD)
-  ROOT_FS    zfs: live_install.sh -G (FMA marks the disk DEGRADED on the way: EIO on first attempts
-             that ZFS retries, no data errors); ufs: ufs_install.sh on slice 0, swap on slice 1
-             (SWAP_MB), not booted yet                                     (zfs)
+  ROOT_FS    zfs: live_install.sh -G, with ZFS's aggregated I/Os kept within the IDE disk driver's
+             128 KB (_tribblix.limit_zfs_aggregation(): without it FMA marked the disk DEGRADED on
+             the way); ufs: ufs_install.sh on slice 0, swap on slice 1 (SWAP_MB), not booted yet  (zfs)
   SWAP_MB    the swap slice with ROOT_FS=ufs, rounded up to whole cylinders  (1024)
   OVERLAYS   overlays to install on top of base, from the CD (none: base only)  (none)
   BOOT_TIMEOUT    seconds from the start to the live CD's login prompt    (5400)
@@ -31,7 +31,7 @@ older versions than the CD carries), without one it skips those.
 import re
 
 from _sparc64 import DEFAULTS as BASE, qemu_args as sparc64_args, shell
-from _tribblix import BANNER, FAIL, LIVE_ROOT_PASSWORD, login, power_off
+from _tribblix import BANNER, FAIL, LIVE_ROOT_PASSWORD, limit_zfs_aggregation, login, power_off
 
 DEFAULTS = {**BASE, "MEM": "2048", "DISK_GB": "8", "NET": "user", "HOSTNAME": "tribblix", "DISK_DEV": "",
             "ROOT_FS": "zfs", "SWAP_MB": "1024", "OVERLAYS": "", "BOOT_TIMEOUT": "5400",
@@ -94,6 +94,9 @@ def run(m, v):
         # its newfs asks "construct a new file system ... (y/n)?" on the terminal
         command = f"echo y | ./ufs_install.sh -n {v['HOSTNAME']} {disk}s0 {v['OVERLAYS']}".strip()
     elif v["ROOT_FS"] == "zfs":
+        # before the pool exists: the live kernel's setting for the install, and the line in the live
+        # /etc/system that the installer copies to the installed system
+        limit_zfs_aggregation(m)
         command = f"./live_install.sh -G -n {v['HOSTNAME']} {disk} {v['OVERLAYS']}".strip()
     else:
         raise ValueError(f"ROOT_FS {v['ROOT_FS']}: ufs or zfs")
