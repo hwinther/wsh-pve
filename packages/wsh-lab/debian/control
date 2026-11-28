@@ -17,12 +17,12 @@ Depends: fonts-dejavu-core,
          python3-yaml,
          ${misc:Depends},
          ${python3:Depends},
+Recommends: tesseract-ocr,
 Suggests: git,
           python3-venv,
           qemu-server,
           mtools,
           squashfs-tools,
-          tesseract-ocr,
           vpx-tools,
 Description: sparc lab of wsh-pve: unattended guest installs into Proxmox VE VMs
  The lab of the wsh-pve project drives a guest's serial console and framebuffer
@@ -49,5 +49,6 @@ Description: sparc lab of wsh-pve: unattended guest installs into Proxmox VE VMs
  SHA-256); no images come with the package.
  .
  The package works with whatever qemu-server is installed and depends on none
- of the wsh-pve packages. tesseract-ocr is needed for targets driven on a
- framebuffer, vpx-tools for the framebuffer videos of a run.
+ of the wsh-pve packages. tesseract-ocr (recommended) is needed for targets
+ driven on a framebuffer or a graphical screen, such as ReactOS's setup;
+ vpx-tools for the framebuffer videos of a run.

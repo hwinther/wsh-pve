@@ -547,8 +547,9 @@ none of the patched packages (it works with whatever `qemu-server` is installed,
 sparc profiles come from), and it pulls in only Debian's `python3-pyte`, `python3-pil` and
 `fonts-dejavu-core`. It puts the lab in `/usr/share/wsh-lab/` and two commands in `/usr/bin`:
 `wsh-lab` (`lab.py`: `install`, `targets`, `media`, `run`, `serve`, ...) and `wsh-lab-mcp` (the
-lab's [MCP server](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#mcp-server)). Suggested,
-not installed by default: `tesseract-ocr` (only for targets driven on a framebuffer; none yet),
+lab's [MCP server](https://github.com/hwinther/wsh-pve/tree/main/e2e/sparc#mcp-server)). Recommended,
+so apt installs it unless recommends are turned off: `tesseract-ocr`, which targets driven on a
+framebuffer or a graphical screen need (`reactos0416`'s setup). Suggested, not installed by default:
 `vpx-tools` (the framebuffer video in the evidence) and `python3-venv` (for `wsh-lab-mcp --setup`).
 `apt purge wsh-lab` removes everything it installed, including the MCP server's venv; the evidence
 of your installs in `/var/lib/wsh-lab/installs/` stays.
